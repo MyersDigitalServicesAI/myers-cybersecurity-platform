@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: myers-cybersecurity-platform
+    env: python
+    region: ohio
+    plan: free
+    branch: main
+    buildCommand: ""
+    startCommand: streamlit run app.py --server.port $PORT --server.enableCORS false
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DOMAIN
+        value: https://myerscybersecurity.onrender.com
+      - key: FROM_EMAIL
+        value: support@myersdigitalservicesai.com
+      # The rest (API keys, DB URL) should be added directly in Render’s UI for security
