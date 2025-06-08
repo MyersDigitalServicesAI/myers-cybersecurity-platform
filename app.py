@@ -62,7 +62,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ✅ Sidebar navigation
-page = st.sidebar.selectbox("Navigate to", ["Setup Wizard", "Dashboard", "Billing", "Threat Detection"])
+page = st.sidebar.selectbox("Navigate to", ["Setup Wizard", "Dashboard", "Billing", "Threat Detection", "Activate Trial"])
+
 
 # ✅ Route logic
 if page == "Setup Wizard":
@@ -75,6 +76,20 @@ elif page == "Billing":
     billing_manager.render_billing_ui()
 elif page == "Threat Detection":
     st.markdown("### Real-time Threat View (coming soon)")
+elif page == "Activate Trial":
+    query_params = st.experimental_get_query_params()
+    token = query_params.get("token", [None])[0]
+
+    st.markdown("## 🔓 Activate Your Trial")
+
+    if token:
+        success = security_core.activate_trial_by_token(token)
+        if success:
+            st.success("✅ Trial activated successfully! You now have access to your dashboard.")
+        else:
+            st.error("❌ Invalid or expired trial token.")
+    else:
+        st.warning("No token provided in the URL.")
 
 
 
