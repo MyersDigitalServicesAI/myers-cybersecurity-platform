@@ -23,29 +23,26 @@ class SecurityCore:
         self.database_url = os.getenv('DATABASE_URL')
         self.init_database()
         self.encryption_key = self.get_or_create_encryption_key()
-    
+
     def get_connection(self):
-    """Get PostgreSQL database connection"""
-    return psycopg2.connect(self.database_url)
+        """Get PostgreSQL database connection"""
+        return psycopg2.connect(self.database_url)
 
-def generate_trial_token(self, user_id):
-    """Generate and store a unique 30-day trial token for email links"""
-    token = secrets.token_urlsafe(32)
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        UPDATE users
-        SET trial_token = %s, updated_at = CURRENT_TIMESTAMP
-        WHERE id = %s
-    """, (token, user_id))
-    
-    conn.commit()
-    conn.close()
-    return token
+    def generate_trial_token(self, user_id):
+        """Generate and store a unique 30-day trial token for email links"""
+        token = secrets.token_urlsafe(32)
+        conn = self.get_connection()
+        cursor = conn.cursor()
 
- 
-   
+        cursor.execute("""
+            UPDATE users
+            SET trial_token = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (token, user_id))
+
+        conn.commit()
+        conn.close()
+        return token   
    
     def init_database(self):
         """Initialize PostgreSQL database with all required tables"""
@@ -70,31 +67,34 @@ def generate_trial_token(self, user_id):
             # Continue with table creation if check fails
             pass
         
-        # Users table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id VARCHAR(255) PRIMARY KEY,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                company VARCHAR(255) NOT NULL,
-                first_name VARCHAR(255) NOT NULL,
-                last_name VARCHAR(255) NOT NULL,
-                phone VARCHAR(50),
-                job_title VARCHAR(255),
-                plan VARCHAR(50) NOT NULL,
-                role VARCHAR(50) DEFAULT 'user',
-                status VARCHAR(50) DEFAULT 'active',
-                trial_start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                trial_end_date TIMESTAMP,
-                is_trial BOOLEAN DEFAULT TRUE,
-                billing_period VARCHAR(20) DEFAULT 'monthly',
-                auto_renewal BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_login TIMESTAMP,
-                trial_ends TIMESTAMP,
-                payment_status VARCHAR(50) DEFAULT 'trial'
-            )
+       # Users table
+       cursor.execute('''
+       CREATE TABLE IF NOT EXISTS users (
+           id VARCHAR(255) PRIMARY KEY,
+           email VARCHAR(255) UNIQUE NOT NULL,
+           password_hash TEXT NOT NULL,
+           company VARCHAR(255) NOT NULL,
+           first_name VARCHAR(255) NOT NULL,
+           last_name VARCHAR(255) NOT NULL,
+           phone VARCHAR(50),
+           job_title VARCHAR(255),
+           plan VARCHAR(50) NOT NULL,
+           role VARCHAR(50) DEFAULT 'user',
+           status VARCHAR(50) DEFAULT 'active',
+           trial_start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+           trial_end_date TIMESTAMP,
+           is_trial BOOLEAN DEFAULT TRUE, 
+           billing_period VARCHAR(20) DEFAULT 'monthly',
+           auto_renewal BOOLEAN DEFAULT TRUE,
+           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+           last_login TIMESTAMP,
+           trial_ends TIMESTAMP,
+           trial_token VARCHAR(255),
+           payment_status VARCHAR(50) DEFAULT 'trial',
+           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
         ''')
+
         
         # API Keys table with encryption
         cursor.execute('''
