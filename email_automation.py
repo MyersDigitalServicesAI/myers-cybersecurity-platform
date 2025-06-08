@@ -25,79 +25,26 @@ class EmailAutomation:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
     
-    def send_email(self, to_email: str, subject: str, html_content: str, 
-                   plain_content: str = None, template_data: Dict = None) -> bool:
-        """Send email using SendGrid with error handling"""
-        if not self.sg:
-            self.logger.error("SendGrid not configured - missing SENDGRID_API_KEY")
-            return False
-        
-        try:
-            mail = Mail(
-                from_email=From(self.from_email, self.company_name),
-                to_emails=To(to_email),
-                subject=Subject(subject),
-                html_content=HtmlContent(html_content)
-            )
-            
-            if plain_content:
-                mail.plain_text_content = PlainTextContent(plain_content)
-            
-            response = self.sg.send(mail)
-            
-            if response.status_code == 202:
-                self.logger.info(f"Email sent successfully to {to_email}")
-                self._log_email_sent(to_email, subject, 'sent')
-                return True
-            else:
-                self.logger.error(f"SendGrid error: {response.status_code}")
-                self._log_email_sent(to_email, subject, 'failed')
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Email sending failed: {str(e)}")
-            self._log_email_sent(to_email, subject, 'error')
-            return False
-    
-    def _log_email_sent(self, email: str, subject: str, status: str):
-        """Log email sending attempts to analytics"""
-        try:
-            # Find user by email
-            conn = self.security_core.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
-            result = cursor.fetchone()
-            conn.close()
-            
-            user_id = result[0] if result else None
-            
-            self.security_core.add_analytics_data(
-                user_id, 'email_sent', 1,
-                {'subject': subject, 'status': status, 'email': email}
-            )
-        except Exception as e:
-            self.logger.error(f"Failed to log email: {str(e)}")
-    
     def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
-        """Send welcome email to new users"""
-           subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
+    """Send welcome email to new users"""
+    subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
 
-           trial_token = user_details.get("trial_token")
-           dashboard_link = f"https://your-domain.com/activate?token={trial_token}"
+    trial_token = user_details.get("trial_token")
+    dashboard_link = f"https://your-domain.com/activate?token={trial_token}"
 
-           html_content = f"""
-          <html>
-          <head>
-          <style>
-             body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
-            .content {{ padding: 30px; }}
-            .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
-            .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }}
-            .footer {{ background: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; }}
-          </style>
-          </head>
-        <body>
+    html_content = f"""
+    <html>
+    <head>
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
+        .content {{ padding: 30px; }}
+        .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
+        .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }}
+        .footer {{ background: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; }}
+    </style>
+    </head>
+    <body>
         <div class="header">
             <h1>Welcome to {self.company_name}!</h1>
             <p>Enterprise Cybersecurity Made Simple</p>
@@ -153,8 +100,6 @@ class EmailAutomation:
     """
 
     return self.send_email(user_details['email'], subject, html_content, plain_content)
-
-
     
     def send_trial_reminder(self, user_id: str, days_remaining: int) -> bool:
         """Send trial expiration reminder"""
