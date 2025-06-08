@@ -1,5 +1,4 @@
 import streamlit as st
-import uuid
 import pandas as pd
 import random
 import plotly.express as px
@@ -14,8 +13,71 @@ import re
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
+# ✅ Must be the very first Streamlit command
+st.set_page_config(
+    page_title="Myers Cybersecurity - Enterprise Security Platform",
+    page_icon="🔐",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ✅ Load environment variables
 load_dotenv()
+
+# ✅ Instantiate core services
+security_core = SecurityCore()
+email_automation = EmailAutomation(security_core)
+email_events = EmailEventHandler(email_automation)
+billing_manager = BillingManager(security_core)
+setup_wizard = SetupWizard(security_core)
+
+# ✅ Global styling (combined into one block)
+st.markdown("""
+<style>
+.main > div {
+    padding-top: 1rem;
+}
+.hero-section {
+    background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #4ade80 100%);
+    padding: 2rem;
+    border-radius: 15px;
+    margin-bottom: 2rem;
+    text-align: center;
+    color: white;
+}
+.feature-card {
+    background: white;
+    padding: 2rem;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1.5rem;
+    transition: transform 0.3s ease;
+}
+.feature-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ✅ Sidebar navigation
+page = st.sidebar.selectbox("Navigate to", ["Setup Wizard", "Dashboard", "Billing", "Threat Detection"])
+
+# ✅ Route logic
+if page == "Setup Wizard":
+    setup_wizard.run()
+elif page == "Dashboard":
+    st.markdown("### Security Dashboard")
+    st.info("Live analytics and security threat visualizations will appear here.")
+
+elif page == "Billing":
+    billing_manager.render_billing_ui()
+elif page == "Threat Detection":
+    st.markdown("### Real-time Threat View (coming soon)")
+
+
+
 
 # Configure page
 st.set_page_config(
