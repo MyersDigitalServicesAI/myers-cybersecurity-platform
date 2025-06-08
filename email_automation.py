@@ -1,105 +1,123 @@
 """
 Email Automation System with SendGrid Integration
 Handles user lifecycle emails, trial notifications, and payment alerts
-"""
-import os
+"""import os
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from datetime import datetime
+from typing import Dict
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Personalization, To, From, Subject, HtmlContent, PlainTextContent
 
-
 class EmailAutomation:
-    def __init__(self,to_email:str security_core):
+    def __init__(self, security_core):
         self.security_core = security_core
         self.sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
         self.from_email = os.getenv('FROM_EMAIL', 'noreply@myerscybersecurity.com')
         self.company_name = "Myers Cybersecurity"
-        
+
         if self.sendgrid_api_key:
             self.sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
         else:
             self.sg = None
-            
+
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
-    
-    def send_welcome_email(self, to_email: str, subject: str, html_content: str, plain_content: str = "") -> bool:
-    """Send welcome email to new users"""
-    subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
 
-    trial_token = user_details.get("trial_token")
-    dashboard_link = f"https://your-domain.com/activate?token={trial_token}"
+    def send_email(self, to_email: str, subject: str, html_content: str, plain_content: str = "") -> bool:
+        if not self.sg:
+            self.logger.error("SendGrid client not configured.")
+            return False
 
-    html_content = f"""
-    <html>
-    <head>
-    <style>
-        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
-        .content {{ padding: 30px; }}
-        .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
-        .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }}
-        .footer {{ background: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; }}
-    </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>Welcome to {self.company_name}!</h1>
-            <p>Enterprise Cybersecurity Made Simple</p>
-        </div>
+        try:
+            mail = Mail(
+                from_email=From(self.from_email, self.company_name),
+                to_emails=To(to_email),
+                subject=Subject(subject),
+                html_content=HtmlContent(html_content)
+            )
+            if plain_content:
+                mail.plain_text_content = PlainTextContent(plain_content)
 
-        <div class="content">
-            <h2>Hello {user_details.get('first_name', 'there')}!</h2>
-            <p>Thank you for joining {self.company_name}. Your 30-day free trial has started, giving you full access to our enterprise cybersecurity platform.</p>
+            response = self.sg.send(mail)
+            return response.status_code == 202
+        except Exception as e:
+            self.logger.error(f"Failed to send email to {to_email}: {e}")
+            return False
 
-            <div class="features">
-                <h3>Your {user_details.get('plan', 'Professional').title()} Plan Includes:</h3>
-                <ul>
-                    <li>🔐 Encrypted API key management</li>
-                    <li>🛡️ Real-time threat detection</li>
-                    <li>📊 Advanced security analytics</li>
-                    <li>🚨 24/7 security monitoring</li>
-                    <li>📞 Priority customer support</li>
-                </ul>
+    def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
+        subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
+        trial_token = user_details.get("trial_token")
+        dashboard_link = f"https://your-domain.com/activate?token={trial_token}"
+
+        html_content = f"""
+        <html>
+        <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
+            .content {{ padding: 30px; }}
+            .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
+            .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }}
+            .footer {{ background: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; }}
+        </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>Welcome to {self.company_name}!</h1>
+                <p>Enterprise Cybersecurity Made Simple</p>
             </div>
 
-            <p><strong>Special Offer:</strong> Convert to a paid plan within 15 days and get <strong>25% off</strong> your first year!</p>
-            <a href="{dashboard_link}" class="button">Activate Your Trial</a>
+            <div class="content">
+                <h2>Hello {user_details.get('first_name', 'there')}!</h2>
+                <p>Thank you for joining {self.company_name}. Your 30-day free trial has started, giving you full access to our enterprise cybersecurity platform.</p>
 
-            <h3>Next Steps:</h3>
-            <ol>
-                <li>Add your first API keys for monitoring</li>
-                <li>Review your security analytics dashboard</li>
-                <li>Configure threat detection alerts</li>
-                <li>Explore our advanced features</li>
-            </ol>
+                <div class="features">
+                    <h3>Your {user_details.get('plan', 'Professional').title()} Plan Includes:</h3>
+                    <ul>
+                        <li>🔐 Encrypted API key management</li>
+                        <li>🛡️ Real-time threat detection</li>
+                        <li>📊 Advanced security analytics</li>
+                        <li>🚨 24/7 security monitoring</li>
+                        <li>📞 Priority customer support</li>
+                    </ul>
+                </div>
 
-            <p>Need help getting started? Our support team is here to assist you.</p>
-        </div>
+                <p><strong>Special Offer:</strong> Convert to a paid plan within 15 days and get <strong>25% off</strong> your first year!</p>
+                <a href="{dashboard_link}" class="button">Activate Your Trial</a>
 
-        <div class="footer">
-            <p>&copy; 2024 {self.company_name}. All rights reserved.</p>
-            <p>Contact us: support@myerscybersecurity.com | 1-800-CYBER-SEC</p>
-        </div>
-    </body>
-    </html>
-    """
+                <h3>Next Steps:</h3>
+                <ol>
+                    <li>Add your first API keys for monitoring</li>
+                    <li>Review your security analytics dashboard</li>
+                    <li>Configure threat detection alerts</li>
+                    <li>Explore our advanced features</li>
+                </ol>
 
-    plain_content = f"""
-    Welcome to {self.company_name}!
+                <p>Need help getting started? Our support team is here to assist you.</p>
+            </div>
 
-    Hello {user_details.get('first_name', 'there')}!
+            <div class="footer">
+                <p>&copy; 2024 {self.company_name}. All rights reserved.</p>
+                <p>Contact us: support@myerscybersecurity.com | 1-800-CYBER-SEC</p>
+            </div>
+        </body>
+        </html>
+        """
 
-    Your 30-day free trial has started.
+        plain_content = f"""
+        Welcome to {self.company_name}!
 
-    Activate here: {dashboard_link}
+        Hello {user_details.get('first_name', 'there')}!
 
-    Plan: {user_details.get('plan', 'Professional').title()}
-    """
+        Your 30-day free trial has started.
 
-    return self.send_email(user_details['email'], subject, html_content, plain_content)
+        Activate here: {dashboard_link}
+
+        Plan: {user_details.get('plan', 'Professional').title()}
+        """
+
+        return self.send_email(user_details['email'], subject, html_content, plain_content)
+
     
     def send_trial_reminder(self, user_id: str, days_remaining: int) -> bool:
         """Send trial expiration reminder"""
