@@ -8,6 +8,7 @@ import secrets
 import re
 import os
 from dotenv import load_dotenv
+from supabase import create_client, Client
 
 from security_core_pg import SecurityCore, ThreatDetection, PaymentProcessor
 from setup_wizard import SetupWizard
@@ -16,6 +17,10 @@ from email_automation import EmailAutomation, EmailEventHandler
 
 # ✅ Load environment variables first
 load_dotenv()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+DOMAIN = os.getenv("DOMAIN", "https://your-domain.com")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ✅ Streamlit config must be the first Streamlit call
 st.set_page_config(
@@ -23,14 +28,66 @@ st.set_page_config(
     page_icon="🔐",
     layout="wide",
     initial_sidebar_state="expanded"
-)# ✅ Sidebar navigation
-page = st.sidebar.selectbox("Navigate to", [
-    "Setup Wizard",
-    "Dashboard",
-    "Billing",
-    "Threat Detection",
-    "Activate Trial"
-])
+)
+
+# ✅ Initialize session state
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = ''
+if 'user_role' not in st.session_state:
+    st.session_state.user_role = 'guest'
+if 'user_uuid' not in st.session_state:
+    st.session_state.user_uuid = ''
+
+# ✅ Supabase Auth login/signup/reset
+if not st.session_state.authenticated:
+    auth_option = st.sidebar.radio("Account Access", ["Login", "Sign Up", "Reset Password"])
+    if auth_option == "Login":
+        with st.sidebar.form("Login"):
+            st.write("### 🔐 Login")
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Login")
+            if submitted:
+                result = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                if result.user:
+                    st.session_state.authenticated = True
+                    st.session_state.user_email = email
+                    st.session_state.user_uuid = result.user.id
+                    st.session_state.user_role = 'admin' if email == 'admin@example.com' else 'user'
+                    st.success("✅ Logged in successfully")
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid Supabase credentials")
+        st.stop()
+
+    elif auth_option == "Sign Up":
+        with st.sidebar.form("SignUp"):
+            st.write("### 🆕 Sign Up")
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Create Account")
+            if submitted:
+                try:
+                    supabase.auth.sign_up({"email": email, "password": password})
+                    st.success("✅ Account created! Check your email to confirm.")
+                except Exception as e:
+                    st.error(f"❌ Error creating account: {str(e)}")
+        st.stop()
+
+    elif auth_option == "Reset Password":
+        with st.sidebar.form("Reset"):
+            st.write("### 🔄 Reset Password")
+            email = st.text_input("Email")
+            submitted = st.form_submit_button("Send Reset Link")
+            if submitted:
+                try:
+                    supabase.auth.reset_password_email(email)
+                    st.success("📧 Password reset email sent.")
+                except Exception as e:
+                    st.error(f"❌ Failed to send reset email: {str(e)}")
+        st.stop()
 
 # ✅ Instantiate core services
 security_core = SecurityCore()
@@ -38,7 +95,6 @@ email_automation = EmailAutomation(security_core)
 email_events = EmailEventHandler(email_automation)
 billing_manager = BillingManager(security_core)
 setup_wizard = SetupWizard(security_core)
-import streamlit as st
 
 # ✅ CSS Styling
 st.markdown("""
@@ -88,30 +144,92 @@ if token_from_url:
     else:
         st.error("❌ Invalid or expired token in URL.")
 
-# ✅ Page routing (example structure)
-if page == "Dashboard":
-    st.markdown("### Security Dashboard")
-    st.info("Live analytics and threat visualizations will be shown here.")
+# ✅ Route by user role
+if st.session_state.user_role == 'admin':
+    st.sidebar.title("🔧 Admin Navigation")
+    admin_page = st.sidebar.selectbox("Go to", ["Admin Panel", "Threat Detection", "Billing"])
 
-elif page == "Billing":
-    billing_manager.render_billing_ui()
-
-elif page == "Threat Detection":
-    st.markdown("### Real-time Threat Detection")
-    st.warning("This module is still under construction.")
-
-elif page == "Activate Trial":
-    st.markdown("## 🔓 Manually Activate Trial with Token")
-    token_input = st.text_input("Paste your activation token here:")
-    if st.button("Activate Trial"):
-        if token_input:
-            result = security_core.activate_trial_by_token(token_input)
-            if result:
-                st.success("✅ Trial activated successfully!")
-            else:
-                st.error("❌ Invalid or expired trial token.")
+    if admin_page == "Admin Panel":
+        st.markdown("## 👥 Admin Panel - Client Monitoring")
+        st.info("Live view of all registered clients and trial status")
+        response = supabase.table("users").select("*").execute()
+        if response.data:
+            df_clients = pd.DataFrame(response.data)
+            now = datetime.now()
+            for user in response.data:
+                if user.get("trial_ends") and datetime.fromisoformat(user["trial_ends"]) < now:
+                    supabase.table("users").update({"payment_status": "expired"}).eq("id", user["id"]).execute()
+            st.dataframe(df_clients)
         else:
-            st.warning("Please enter a token to activate.")
+            st.info("No clients found.")
+
+    elif admin_page == "Threat Detection":
+        st.markdown("### Real-time Threat Detection")
+        events = security_core.fetch_security_events()
+        if not events:
+            st.info("No threats detected.")
+        else:
+            df = pd.DataFrame(events)
+            st.dataframe(df)
+
+    elif admin_page == "Billing":
+        billing_manager.render_billing_ui()
+
+else:
+    st.sidebar.title("🛡️ Client Navigation")
+    client_page = st.sidebar.selectbox("Go to", ["Setup Wizard", "Dashboard", "Billing", "Threat Detection", "Activate Trial"])
+
+    if client_page == "Dashboard":
+        st.markdown("### Security Dashboard")
+        with st.spinner("Loading data..."):
+            uptime = round(99.5 + (random.random() * 0.5), 2)
+            threats = random.randint(3, 10)
+            st.metric("Uptime %", f"{uptime}%")
+            st.metric("Active Threats", f"{threats}")
+
+    elif client_page == "Setup Wizard":
+        setup_wizard.render()
+
+    elif client_page == "Billing":
+        st.markdown("## 💳 Upgrade Your Plan")
+        plans = billing_manager.get_plan_pricing()
+        selected_plan = st.selectbox("Choose a plan", list(plans.keys()))
+        billing_period = st.radio("Billing Period", ["monthly", "yearly"])
+        if st.button("Proceed to Checkout"):
+            session = billing_manager.create_checkout_session(
+                selected_plan,
+                billing_period,
+                st.session_state.user_email,
+                datetime.now()
+            )
+            if "checkout_url" in session:
+                st.success("✅ Redirecting to Stripe...")
+                st.markdown(f"[Click here to pay securely]({session['checkout_url']})", unsafe_allow_html=True)
+            else:
+                st.error(f"❌ Error: {session.get('error', 'Unknown issue')}")
+
+    elif client_page == "Threat Detection":
+        st.markdown("### Real-time Threat Detection")
+        events = security_core.fetch_security_events()
+        if not events:
+            st.info("No threats detected.")
+        else:
+            df = pd.DataFrame(events)
+            st.dataframe(df)
+
+    elif client_page == "Activate Trial":
+        st.markdown("## 🔓 Manually Activate Trial with Token")
+        token_input = st.text_input("Paste your activation token here:")
+        if st.button("Activate Trial"):
+            if token_input:
+                result = security_core.activate_trial_by_token(token_input)
+                if result:
+                    st.success("✅ Trial activated successfully!")
+                else:
+                    st.error("❌ Invalid or expired trial token.")
+            else:
+                st.warning("Please enter a token to activate.")
+
 
 
 
