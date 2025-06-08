@@ -11,7 +11,7 @@ from sendgrid.helpers.mail import Mail, Personalization, To, From, Subject, Html
 
 
 class EmailAutomation:
-    def __init__(self, security_core):
+    def __init__(self,to_email:str security_core):
         self.security_core = security_core
         self.sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
         self.from_email = os.getenv('FROM_EMAIL', 'noreply@myerscybersecurity.com')
@@ -25,7 +25,7 @@ class EmailAutomation:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
     
-    def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
+    def send_welcome_email(self, to_email: str, subject: str, html_content: str, plain_content: str = "") -> bool:
     """Send welcome email to new users"""
     subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
 
