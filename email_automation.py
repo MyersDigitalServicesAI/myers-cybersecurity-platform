@@ -78,91 +78,84 @@ class EmailAutomation:
         except Exception as e:
             self.logger.error(f"Failed to log email: {str(e)}")
     
-    def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
-        """Send welcome email to new users"""
-        subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
-        
-        html_content = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
-                .content {{ padding: 30px; }}
-                .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
-                .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }}
-                .footer {{ background: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>Welcome to {self.company_name}!</h1>
-                <p>Enterprise Cybersecurity Made Simple</p>
+def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
+    """Send welcome email to new users"""
+    subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
+
+    trial_token = user_details.get("trial_token")
+    dashboard_link = f"https://your-domain.com/activate?token={trial_token}"
+
+    html_content = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
+            .content {{ padding: 30px; }}
+            .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
+            .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }}
+            .footer {{ background: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>Welcome to {self.company_name}!</h1>
+            <p>Enterprise Cybersecurity Made Simple</p>
+        </div>
+
+        <div class="content">
+            <h2>Hello {user_details.get('first_name', 'there')}!</h2>
+
+            <p>Thank you for joining {self.company_name}. Your 30-day free trial has started, giving you full access to our enterprise cybersecurity platform.</p>
+
+            <div class="features">
+                <h3>Your {user_details.get('plan', 'Professional').title()} Plan Includes:</h3>
+                <ul>
+                    <li>🔐 Encrypted API key management</li>
+                    <li>🛡️ Real-time threat detection</li>
+                    <li>📊 Advanced security analytics</li>
+                    <li>🚨 24/7 security monitoring</li>
+                    <li>📞 Priority customer support</li>
+                </ul>
             </div>
-            
-            <div class="content">
-                <h2>Hello {user_details.get('first_name', 'there')}!</h2>
-                
-                <p>Thank you for joining {self.company_name}. Your 30-day free trial has started, giving you full access to our enterprise cybersecurity platform.</p>
-                
-                <div class="features">
-                    <h3>Your {user_details.get('plan', 'Professional').title()} Plan Includes:</h3>
-                    <ul>
-                        <li>🔐 Encrypted API key management</li>
-                        <li>🛡️ Real-time threat detection</li>
-                        <li>📊 Advanced security analytics</li>
-                        <li>🚨 24/7 security monitoring</li>
-                        <li>📞 Priority customer support</li>
-                    </ul>
-                </div>
-                
-                <p><strong>Special Offer:</strong> Convert to a paid plan within 15 days and get <strong>25% off</strong> your first year!</p>
-                
-                <a href="https://your-domain.com/dashboard" class="button">Access Your Dashboard</a>
-                
-                <h3>Next Steps:</h3>
-                <ol>
-                    <li>Add your first API keys for monitoring</li>
-                    <li>Review your security analytics dashboard</li>
-                    <li>Configure threat detection alerts</li>
-                    <li>Explore our advanced features</li>
-                </ol>
-                
-                <p>Need help getting started? Our support team is here to assist you.</p>
-            </div>
-            
-            <div class="footer">
-                <p>&copy; 2024 {self.company_name}. All rights reserved.</p>
-                <p>Contact us: support@myerscybersecurity.com | 1-800-CYBER-SEC</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        plain_content = f"""
-        Welcome to {self.company_name}!
-        
-        Hello {user_details.get('first_name', 'there')}!
-        
-        Thank you for joining {self.company_name}. Your 30-day free trial has started.
-        
-        Your {user_details.get('plan', 'Professional').title()} plan includes:
-        - Encrypted API key management
-        - Real-time threat detection
-        - Advanced security analytics
-        - 24/7 security monitoring
-        - Priority customer support
-        
-        Special Offer: Convert within 15 days and get 25% off your first year!
-        
-        Access your dashboard: https://your-domain.com/dashboard
-        
-        Need help? Contact support@myerscybersecurity.com
-        """
-        
-        return self.send_email(
-            user_details['email'], subject, html_content, plain_content
-        )
+
+            <p><strong>Special Offer:</strong> Convert to a paid plan within 15 days and get <strong>25% off</strong> your first year!</p>
+
+            <a href="{dashboard_link}" class="button">Activate Your Trial</a>
+
+            <h3>Next Steps:</h3>
+            <ol>
+                <li>Add your first API keys for monitoring</li>
+                <li>Review your security analytics dashboard</li>
+                <li>Configure threat detection alerts</li>
+                <li>Explore our advanced features</li>
+            </ol>
+
+            <p>Need help getting started? Our support team is here to assist you.</p>
+        </div>
+
+        <div class="footer">
+            <p>&copy; 2024 {self.company_name}. All rights reserved.</p>
+            <p>Contact us: support@myerscybersecurity.com | 1-800-CYBER-SEC</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    plain_content = f"""
+    Welcome to {self.company_name}!
+
+    Hello {user_details.get('first_name', 'there')}!
+
+    Your 30-day free trial has started.
+
+    Activate here: {dashboard_link}
+
+    Plan: {user_details.get('plan', 'Professional').title()}
+    """
+
+    return self.send_email(user_details['email'], subject, html_content, plain_content)
+
     
     def send_trial_reminder(self, user_id: str, days_remaining: int) -> bool:
         """Send trial expiration reminder"""
