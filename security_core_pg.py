@@ -92,8 +92,8 @@ class SecurityCore:
            trial_token VARCHAR(255),
            payment_status VARCHAR(50) DEFAULT 'trial',
            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
+          )
+      ''')
 
         
         # API Keys table with encryption
@@ -229,57 +229,88 @@ class SecurityCore:
     def decrypt_api_key(self, encrypted_key):
         """Decrypt API key from storage"""
         return self.encryption_key.decrypt(encrypted_key.encode()).decode()
-    
     def create_user(self, email, password, company, first_name, last_name, plan, phone="", job_title="", billing_period="monthly"):
-        """Create new user with comprehensive input validation and secure password hashing"""
+    """Create new user with comprehensive input validation and secure password hashing"""
+
+    # Validate and sanitize inputs
+    validated_email = self.validate_email_input(email)
+    if not validated_email:
+        return None, "Invalid email format"
+
+    # Validate password strength
+    is_valid, password_message = self.validate_password_strength(password)
+    if not is_valid:
+        return None, password_message
+
+    # Sanitize all text inputs
+    company = self.sanitize_input(company, 100)
+    first_name = self.sanitize_input(first_name, 50)
+    last_name = self.sanitize_input(last_name, 50)
+    phone = self.sanitize_input(phone, 20)
+    job_title = self.sanitize_input(job_title, 100)
+
+    # Validate plan
+    allowed_plans = ['essentials', 'basic', 'professional', 'business', 'enterprise']
+    if plan not in allowed_plans:
+        return None, "Invalid plan selected"
+
+    # Initialize user info
+    user_id = secrets.token_urlsafe(16)
+    password_hash = self.hash_password(password)
+    trial_start = datetime.now()
+    trial_end = trial_start + timedelta(days=30)
+
+    conn = self.get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+            INSERT INTO users (id, email, password_hash, company, first_name, last_name, 
+                               phone, job_title, plan, trial_start_date, trial_end_date, 
+                               is_trial, billing_period, auto_renewal, trial_ends)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (user_id, validated_email, password_hash, company, first_name, last_name, 
+              phone, job_title, plan, trial_start, trial_end, True, billing_period, True, trial_end))
         
-        # Validate and sanitize inputs
-        validated_email = self.validate_email_input(email)
-        if not validated_email:
-            return None, "Invalid email format"
-        
-        # Validate password strength
-        is_valid, password_message = self.validate_password_strength(password)
-        if not is_valid:
-            return None, password_message
-        
-        # Sanitize all text inputs
-        company = self.sanitize_input(company, 100)
-        first_name = self.sanitize_input(first_name, 50)
-        last_name = self.sanitize_input(last_name, 50)
-        phone = self.sanitize_input(phone, 20)
-        job_title = self.sanitize_input(job_title, 100)
-        
-        # Validate plan is in allowed list
-        allowed_plans = ['essentials', 'basic', 'professional', 'business', 'enterprise']
-        if plan not in allowed_plans:
-            return None, "Invalid plan selected"
-        
-        user_id = secrets.token_urlsafe(16)
-        password_hash = self.hash_password(password)
-        trial_start = datetime.now()
-        trial_end = trial_start + timedelta(days=30)
-        
+        conn.commit()
+
+        # Generate trial token
+        trial_token = self.generate_trial_token(user_id)
+
+        # Log event
+        self.log_security_event(user_id, 'user_created', 'info', f'New user account created for {validated_email}')
+
+        return user_id, trial_token
+
+    except psycopg2.IntegrityError as e:
+        if 'email' in str(e):
+            return None, "Email address already exists"
+        return None, "Failed to create user account"
+    except Exception as e:
+        return None, f"Database error: {str(e)}"
+    finally:
+        conn.close()
+
+         
+
+    
+    def get_trial_discount_eligibility(self, user_id):
+        """Check if user is eligible for 25% trial conversion discount"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        try:
-            cursor.execute('''
-                INSERT INTO users (id, email, password_hash, company, first_name, last_name, 
-                                 phone, job_title, plan, trial_start_date, trial_end_date, 
-                                 is_trial, billing_period, auto_renewal, trial_ends)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (user_id, validated_email, password_hash, company, first_name, last_name, 
-                  phone, job_title, plan, trial_start, trial_end, True, billing_period, True, trial_end))
+        cursor.execute('''
+            SELECT trial_start_date, is_trial FROM users WHERE id = %s
+        ''', (user_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result or not result[1]:  # Not in trial
+            return False
             
-            conn.commit()
-            
-            # Log user creation
-            self.log_security_event(user_id, 'user_created', 'info', 
-                                   f'New user account created for {validated_email}')
-            
-            return user_id, "User created successfully"
-        except psycopg2.IntegrityError as e:
+           
+            except psycopg2.IntegrityError as e:
             if 'email' in str(e):
                 return None, "Email address already exists"
             return None, "Failed to create user account"
