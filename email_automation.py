@@ -105,7 +105,6 @@ def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
 
         <div class="content">
             <h2>Hello {user_details.get('first_name', 'there')}!</h2>
-
             <p>Thank you for joining {self.company_name}. Your 30-day free trial has started, giving you full access to our enterprise cybersecurity platform.</p>
 
             <div class="features">
@@ -120,7 +119,6 @@ def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
             </div>
 
             <p><strong>Special Offer:</strong> Convert to a paid plan within 15 days and get <strong>25% off</strong> your first year!</p>
-
             <a href="{dashboard_link}" class="button">Activate Your Trial</a>
 
             <h3>Next Steps:</h3>
@@ -155,6 +153,7 @@ def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
     """
 
     return self.send_email(user_details['email'], subject, html_content, plain_content)
+
 
     
     def send_trial_reminder(self, user_id: str, days_remaining: int) -> bool:
