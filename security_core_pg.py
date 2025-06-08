@@ -25,10 +25,10 @@ class SecurityCore:
         self.encryption_key = self.get_or_create_encryption_key()
     
     def get_connection(self):
-        """Get PostgreSQL database connection"""
-        return psycopg2.connect(self.database_url)
-     
-    def generate_trial_token(self, user_id):
+    """Get PostgreSQL database connection"""
+    return psycopg2.connect(self.database_url)
+
+def generate_trial_token(self, user_id):
     """Generate and store a unique 30-day trial token for email links"""
     token = secrets.token_urlsafe(32)
     conn = self.get_connection()
@@ -43,6 +43,9 @@ class SecurityCore:
     conn.commit()
     conn.close()
     return token
+
+ 
+   
    
     def init_database(self):
         """Initialize PostgreSQL database with all required tables"""
