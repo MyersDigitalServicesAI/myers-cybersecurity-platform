@@ -4,25 +4,33 @@ import random
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-from security_core_pg import SecurityCore, ThreatDetection, PaymentProcessor
-from setup_wizard import SetupWizard
-from billing import BillingManager, SecurityAuditLogger, DiscountEngine
-from email_automation import EmailAutomation, EmailEventHandler
 import secrets
 import re
 import os
 from dotenv import load_dotenv
 
-# ✅ Must be the very first Streamlit command
+from security_core_pg import SecurityCore, ThreatDetection, PaymentProcessor
+from setup_wizard import SetupWizard
+from billing import BillingManager, SecurityAuditLogger, DiscountEngine
+from email_automation import EmailAutomation, EmailEventHandler
+
+# ✅ Load environment variables first
+load_dotenv()
+
+# ✅ Streamlit config must be the first Streamlit call
 st.set_page_config(
     page_title="Myers Cybersecurity - Enterprise Security Platform",
     page_icon="🔐",
     layout="wide",
     initial_sidebar_state="expanded"
-)
-
-# ✅ Load environment variables
-load_dotenv()
+)# ✅ Sidebar navigation
+page = st.sidebar.selectbox("Navigate to", [
+    "Setup Wizard",
+    "Dashboard",
+    "Billing",
+    "Threat Detection",
+    "Activate Trial"
+])
 
 # ✅ Instantiate core services
 security_core = SecurityCore()
@@ -30,66 +38,82 @@ email_automation = EmailAutomation(security_core)
 email_events = EmailEventHandler(email_automation)
 billing_manager = BillingManager(security_core)
 setup_wizard = SetupWizard(security_core)
+import streamlit as st
 
-# ✅ Global styling (combined into one block)
+# ✅ CSS Styling
 st.markdown("""
 <style>
-.main > div {
-    padding-top: 1rem;
-}
+.main > div { padding-top: 1rem; }
 .hero-section {
-    background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #4ade80 100%);
-    padding: 2rem;
-    border-radius: 15px;
-    margin-bottom: 2rem;
-    text-align: center;
-    color: white;
+ background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #4ade80 100%);
+ padding: 2rem; border-radius: 15px; margin-bottom: 2rem;
+ text-align: center; color: white;
 }
 .feature-card {
-    background: white;
-    padding: 2rem;
-    border-radius: 12px;
-    border: 1px solid #e2e8f0;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    margin-bottom: 1.5rem;
-    transition: transform 0.3s ease;
+ background: white; padding: 2rem; border-radius: 12px;
+ border: 1px solid #e2e8f0;
+ box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 1.5rem;
+ transition: transform 0.3s ease;
 }
 .feature-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+ transform: translateY(-2px);
+ box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+}
+.pricing-card {
+ background: white; border: 2px solid #e2e8f0; border-radius: 20px;
+ padding: 2rem; text-align: center; margin-bottom: 2rem;
+ position: relative; transition: all 0.3s ease;
+}
+.pricing-card:hover { border-color: #4ade80; transform: scale(1.02); }
+.popular-badge {
+ position: absolute; top: -15px; left: 50%; transform: translateX(-50%);
+ background: #4ade80; color: white; padding: 0.5rem 1.5rem;
+ border-radius: 25px; font-weight: bold; font-size: 0.9rem;
+}
+.status-badge {
+ background: #f59e0b; color: white; padding: 0.25rem 1rem;
+ border-radius: 20px; font-weight: bold; font-size: 0.8rem;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ✅ Sidebar navigation
-page = st.sidebar.selectbox("Navigate to", ["Setup Wizard", "Dashboard", "Billing", "Threat Detection", "Activate Trial"])
+# ✅ Auto-activate trial if token is in URL
+query_params = st.experimental_get_query_params()
+token_from_url = query_params.get("token", [None])[0]
 
+if token_from_url:
+    auto_activated = security_core.activate_trial_by_token(token_from_url)
+    if auto_activated:
+        st.success("✅ Trial activated successfully via link!")
+    else:
+        st.error("❌ Invalid or expired token in URL.")
 
-# ✅ Route logic
-if page == "Setup Wizard":
-    setup_wizard.run()
-elif page == "Dashboard":
+# ✅ Page routing (example structure)
+if page == "Dashboard":
     st.markdown("### Security Dashboard")
-    st.info("Live analytics and security threat visualizations will appear here.")
+    st.info("Live analytics and threat visualizations will be shown here.")
 
 elif page == "Billing":
     billing_manager.render_billing_ui()
+
 elif page == "Threat Detection":
-    st.markdown("### Real-time Threat View (coming soon)")
+    st.markdown("### Real-time Threat Detection")
+    st.warning("This module is still under construction.")
+
 elif page == "Activate Trial":
-    query_params = st.experimental_get_query_params()
-    token = query_params.get("token", [None])[0]
-
-    st.markdown("## 🔓 Activate Your Trial")
-
-    if token:
-        success = security_core.activate_trial_by_token(token)
-        if success:
-            st.success("✅ Trial activated successfully! You now have access to your dashboard.")
+    st.markdown("## 🔓 Manually Activate Trial with Token")
+    token_input = st.text_input("Paste your activation token here:")
+    if st.button("Activate Trial"):
+        if token_input:
+            result = security_core.activate_trial_by_token(token_input)
+            if result:
+                st.success("✅ Trial activated successfully!")
+            else:
+                st.error("❌ Invalid or expired trial token.")
         else:
-            st.error("❌ Invalid or expired trial token.")
-    else:
-        st.warning("No token provided in the URL.")
+            st.warning("Please enter a token to activate.")
+
+
 
 
 
