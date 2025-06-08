@@ -78,17 +78,17 @@ class EmailAutomation:
         except Exception as e:
             self.logger.error(f"Failed to log email: {str(e)}")
     
-def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
-    """Send welcome email to new users"""
-    subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
+    def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
+            """Send welcome email to new users"""
+            subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
 
-    trial_token = user_details.get("trial_token")
-    dashboard_link = f"https://your-domain.com/activate?token={trial_token}"
+            trial_token = user_details.get("trial_token")
+            dashboard_link = f"https://your-domain.com/activate?token={trial_token}"
 
-    html_content = f"""
-    <html>
-    <head>
-        <style>
+            html_content = f"""
+           <html>
+           <head>
+           <style>
             body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
             .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
             .content {{ padding: 30px; }}
