@@ -79,25 +79,25 @@ class EmailAutomation:
             self.logger.error(f"Failed to log email: {str(e)}")
     
     def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
-            """Send welcome email to new users"""
-            subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
+        """Send welcome email to new users"""
+           subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
 
-            trial_token = user_details.get("trial_token")
-            dashboard_link = f"https://your-domain.com/activate?token={trial_token}"
+           trial_token = user_details.get("trial_token")
+           dashboard_link = f"https://your-domain.com/activate?token={trial_token}"
 
-            html_content = f"""
-           <html>
-           <head>
-           <style>
-            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+           html_content = f"""
+          <html>
+          <head>
+          <style>
+             body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
             .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
             .content {{ padding: 30px; }}
             .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
             .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }}
             .footer {{ background: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; }}
-        </style>
-    </head>
-    <body>
+          </style>
+          </head>
+        <body>
         <div class="header">
             <h1>Welcome to {self.company_name}!</h1>
             <p>Enterprise Cybersecurity Made Simple</p>
