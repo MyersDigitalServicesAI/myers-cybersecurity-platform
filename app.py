@@ -89,6 +89,57 @@ if not st.session_state.authenticated:
                     st.error(f"❌ Failed to send reset email: {str(e)}")
         st.stop()
 
+# Initialize core system
+security_core = SecurityCore()
+
+# Sidebar Navigation
+pages = ["Dashboard", "API Keys", "Threat Detection"]
+if st.session_state.get("user_role") == "admin":
+    pages += ["Admin Panel", "User Management"]
+
+page = st.sidebar.selectbox("Navigate to", pages)
+
+# Dashboard Page
+if page == "Dashboard":
+    st.markdown("## 🔒 Security Dashboard")
+    st.info("Live analytics and threat visualizations will be shown here.")
+
+# API Keys Page
+elif page == "API Keys":
+    st.markdown("### Manage API Keys")
+    st.info("Encrypted key storage and permissions management.")
+
+# Threat Detection Page
+elif page == "Threat Detection":
+    st.markdown("### Real-time Threat Detection")
+    st.warning("This module is still under construction.")
+
+# Admin Panel Page
+elif page == "Admin Panel":
+    st.markdown("## 🛡️ Admin Dashboard")
+    summary = security_core.get_admin_dashboard_summary()
+    st.metric("Total Users", summary["total_users"])
+    st.metric("API Keys", summary["total_api_keys"])
+    st.metric("Critical Events", summary["critical_events"])
+    st.metric("Threat Indicators", summary["threat_indicators"])
+
+# User Management Page
+elif page == "User Management":
+    st.markdown("## 👥 User Management")
+    user_id = st.text_input("User ID")
+    action = st.selectbox("Admin Action", ["Suspend", "Reactivate", "Promote to Admin", "Demote to User"])
+    if st.button("Execute Action") and user_id:
+        if action == "Suspend":
+            security_core.suspend_user(user_id)
+        elif action == "Reactivate":
+            security_core.reactivate_user(user_id)
+        elif action == "Promote to Admin":
+            security_core.promote_to_admin(user_id)
+        elif action == "Demote to User":
+            security_core.demote_to_user(user_id)
+        st.success(f"{action} action applied to user.")
+
+
 # ✅ Instantiate core services
 security_core = SecurityCore()
 email_automation = EmailAutomation(security_core)
