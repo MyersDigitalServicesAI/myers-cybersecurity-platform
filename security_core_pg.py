@@ -159,15 +159,15 @@ class SecurityCore:
         return psycopg2.connect(self.database_url)
 
     def init_database(self):
-    conn = self.get_connection()
-    cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor()
 
-    # Check if tables exist first
-    try:
-        cursor.execute("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' AND table_name = 'users'
+        # Check if tables exist first
+        try:
+           cursor.execute("""
+               SELECT EXISTS (
+                   SELECT FROM information_schema.tables 
+                   WHERE table_schema = 'public' AND table_name = 'users'
             );
         """)
         result = cursor.fetchone()
@@ -176,67 +176,67 @@ class SecurityCore:
         if tables_exist:
             conn.close()
             return
-    except Exception:
-        # Continue with table creation if check fails
-        pass
+        except Exception:
+            # Continue with table creation if check fails
+            pass
 
-def get_or_create_encryption_key(self):
-    """Load or generate encryption key (stub)"""
+    def get_or_create_encryption_key(self):
+        """Load or generate encryption key (stub)"""
     return "your-secure-encryption-key"
 
-def generate_trial_token(self, user_id):
-    """Generate and store a unique 30-day trial token for email links"""
-    token = secrets.token_urlsafe(32)
-    try:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE users
-            SET trial_token = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-        """, (token, user_id))
-        conn.commit()
-        conn.close()
-        return token
-    except Exception as e:
-        print(f"Token generation error: {e}")
-        return None
-
-def activate_trial_by_token(self, token: str) -> bool:
-    """Activates a user's trial account if the token is valid."""
-    try:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id FROM users WHERE trial_token = %s
-        """, (token,))
-        user = cursor.fetchone()
-
-        if user:
-            user_id = user[0]
-            now = datetime.utcnow()
-            end_date = now + timedelta(days=30)
-
+    def generate_trial_token(self, user_id):
+        """Generate and store a unique 30-day trial token for email links"""
+        token = secrets.token_urlsafe(32)
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
             cursor.execute("""
                 UPDATE users
-                SET trial_start_date = %s,
-                    trial_end_date = %s,
-                    is_trial = TRUE,
-                    status = 'active',
-                    trial_token = NULL,
-                    updated_at = CURRENT_TIMESTAMP
+                SET trial_token = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
-            """, (now, end_date, user_id))
+            """, (token, user_id))
             conn.commit()
             conn.close()
-            return True
-        else:
-            conn.close()
-            return False
+            return token
+        except Exception as e:
+            print(f"Token generation error: {e}")
+            return None
 
-    except Exception as e:
-        print(f"Activation error: {e}")
-        return False
+    def activate_trial_by_token(self, token: str) -> bool:
+        """Activates a user's trial account if the token is valid."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT id FROM users WHERE trial_token = %s
+            """, (token,))
+            user = cursor.fetchone()
+
+            if user:
+                user_id = user[0]
+                now = datetime.utcnow()
+                end_date = now + timedelta(days=30)
+
+                cursor.execute("""
+                    UPDATE users
+                    SET trial_start_date = %s,
+                        trial_end_date = %s,
+                        is_trial = TRUE,
+                        status = 'active',
+                        trial_token = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                """, (now, end_date, user_id))
+                conn.commit()
+                conn.close()
+                return True
+            else:
+                conn.close()
+                return False
+ 
+        except Exception as e:
+            print(f"Activation error: {e}")
+            return False
 
     # Users table
     cursor.execute('''
