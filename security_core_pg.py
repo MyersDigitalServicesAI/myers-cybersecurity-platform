@@ -234,55 +234,58 @@ class SecurityCore:
         return token   
    
     def init_database(self):
-        """Initialize PostgreSQL database with all required tables"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Check if tables exist first
-        try:
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' AND table_name = 'users'
-                );
-            """)
-            result = cursor.fetchone()
-            tables_exist = result[0] if result else False
-            
-            if tables_exist:
-                conn.close()
-                return
-        except Exception:
-            # Continue with table creation if check fails
-            pass
-        
-       # Users table
-           cursor.execute('''
-       CREATE TABLE IF NOT EXISTS users (
-           id VARCHAR(255) PRIMARY KEY,
-           email VARCHAR(255) UNIQUE NOT NULL,
-           password_hash TEXT NOT NULL,
-           company VARCHAR(255) NOT NULL,
-           first_name VARCHAR(255) NOT NULL,
-           last_name VARCHAR(255) NOT NULL,
-           phone VARCHAR(50),
-           job_title VARCHAR(255),
-           plan VARCHAR(50) NOT NULL,
-           role VARCHAR(50) DEFAULT 'user',
-           status VARCHAR(50) DEFAULT 'active',
-           trial_start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-           trial_end_date TIMESTAMP,
-           is_trial BOOLEAN DEFAULT TRUE, 
-           billing_period VARCHAR(20) DEFAULT 'monthly',
-           auto_renewal BOOLEAN DEFAULT TRUE,
-           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-           last_login TIMESTAMP,
-           trial_ends TIMESTAMP,
-           trial_token VARCHAR(255),
-           payment_status VARCHAR(50) DEFAULT 'trial',
-           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          )
-      ''')
+    conn = self.get_connection()
+    cursor = conn.cursor()
+    
+    # Check if tables exist first
+    try:
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'users'
+            );
+        """)
+        result = cursor.fetchone()
+        tables_exist = result[0] if result else False
+
+        if tables_exist:
+            conn.close()
+            return
+    except Exception:
+        # Continue with table creation if check fails
+        pass
+
+    # Users table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id VARCHAR(255) PRIMARY KEY,
+            email VARCHAR(255) UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            company VARCHAR(255) NOT NULL,
+            first_name VARCHAR(255) NOT NULL,
+            last_name VARCHAR(255) NOT NULL,
+            phone VARCHAR(50),
+            job_title VARCHAR(255),
+            plan VARCHAR(50) NOT NULL,
+            role VARCHAR(50) DEFAULT 'user',
+            status VARCHAR(50) DEFAULT 'active',
+            trial_start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            trial_end_date TIMESTAMP,
+            is_trial BOOLEAN DEFAULT TRUE,
+            billing_period VARCHAR(20) DEFAULT 'monthly',
+            auto_renewal BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP,
+            trial_ends TIMESTAMP,
+            trial_token VARCHAR(255),
+            payment_status VARCHAR(50) DEFAULT 'trial',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    # Add other table creation statements here, properly indented
+
+    conn.commit()
+    conn.close()
 
         
         # API Keys table with encryption
