@@ -1,3 +1,7 @@
+# ===============================
+# Docker + GitHub Actions + Env Toggle Ready + Render Deployment
+# ===============================
+
 import streamlit as st
 import pandas as pd
 import random
@@ -15,8 +19,10 @@ from setup_wizard import SetupWizard
 from billing import BillingManager, SecurityAuditLogger, DiscountEngine
 from email_automation import EmailAutomation, EmailEventHandler
 
-# ✅ Load environment variables first
-load_dotenv()
+# ✅ Load environment variables by environment
+env_mode = os.getenv("ENVIRONMENT", "development")
+load_dotenv(dotenv_path=f".env.{env_mode}")
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DOMAIN = os.getenv("DOMAIN", "https://your-domain.com")
@@ -30,6 +36,47 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+st.sidebar.markdown(f"**🔧 ENV: `{env_mode}`**")
+
+# ✅ GitHub Actions CI/CD YAML (for reference)
+# .github/workflows/deploy.yml
+# name: Deploy to Render
+# on:
+#   push:
+#     branches: [ main ]
+# jobs:
+#   deploy:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v3
+#       - name: Set up Python
+#         uses: actions/setup-python@v4
+#         with:
+#           python-version: '3.11'
+#       - name: Install dependencies
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install -r requirements.txt
+#       - name: Deploy to Render
+#         run: |
+#           curl -X POST "$RENDER_DEPLOY_HOOK_URL"
+
+# ✅ Dockerfile (for reference)
+# FROM python:3.11-slim
+# WORKDIR /app
+# COPY . .
+# RUN pip install --no-cache-dir -r requirements.txt
+# CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+
+# ✅ requirements.txt (for reference)
+# streamlit
+# pandas
+# python-dotenv
+# plotly
+# supabase
+# psycopg2-binary
+# requests
+
 # ✅ Initialize session state
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
@@ -37,8 +84,6 @@ if 'user_email' not in st.session_state:
     st.session_state.user_email = ''
 if 'user_role' not in st.session_state:
     st.session_state.user_role = 'guest'
-if 'user_uuid' not in st.session_state:
-    st.session_state.user_uuid = ''
 
 # ✅ Supabase Auth login/signup/reset
 if not st.session_state.authenticated:
@@ -56,6 +101,16 @@ if not st.session_state.authenticated:
                     st.session_state.user_email = email
                     st.session_state.user_uuid = result.user.id
                     st.session_state.user_role = 'admin' if email == 'admin@example.com' else 'user'
+
+                    conn = SecurityCore().get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO admin_activity_log (admin_id, user_id, action, timestamp)
+                        VALUES (%s, %s, %s, %s)
+                    """, (st.session_state.user_uuid, st.session_state.user_uuid, 'login', datetime.utcnow()))
+                    conn.commit()
+                    conn.close()
+
                     st.success("✅ Logged in successfully")
                     st.rerun()
                 else:
@@ -89,203 +144,118 @@ if not st.session_state.authenticated:
                     st.error(f"❌ Failed to send reset email: {str(e)}")
         st.stop()
 
-# Initialize core system
+# ✅ Main Navigation (if logged in)
 security_core = SecurityCore()
+billing_manager = BillingManager()
+setup_wizard = SetupWizard()
 
-# Sidebar Navigation
-pages = ["Dashboard", "API Keys", "Threat Detection"]
-if st.session_state.get("user_role") == "admin":
-    pages += ["Admin Panel", "User Management"]
+st.sidebar.divider()
+st.sidebar.write(f"👤 {st.session_state.user_email}")
 
-page = st.sidebar.selectbox("Navigate to", pages)
+if st.sidebar.button("🚪 Logout"):
+    st.session_state.authenticated = False
+    st.session_state.user_email = ''
+    st.session_state.user_role = 'guest'
 
-# Dashboard Page
-if page == "Dashboard":
-    st.markdown("## 🔒 Security Dashboard")
+    conn = security_core.get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO admin_activity_log (admin_id, user_id, action, timestamp)
+        VALUES (%s, %s, %s, %s)
+    """, (st.session_state.user_uuid, st.session_state.user_uuid, 'logout', datetime.utcnow()))
+    conn.commit()
+    conn.close()
+    st.rerun()
+
+# ✅ Sidebar navigation
+page = st.sidebar.selectbox("Navigate to", [
+    "Setup Wizard",
+    "Dashboard",
+    "Billing",
+    "Threat Detection",
+    "Admin Panel",
+    "Admin Logs"
+])
+
+# ✅ Page Routing
+if page == "Setup Wizard":
+    setup_wizard.run()
+elif page == "Dashboard":
+    st.markdown("### Security Dashboard")
     st.info("Live analytics and threat visualizations will be shown here.")
-
-# API Keys Page
-elif page == "API Keys":
-    st.markdown("### Manage API Keys")
-    st.info("Encrypted key storage and permissions management.")
-
-# Threat Detection Page
+elif page == "Billing":
+    billing_manager.render_billing_ui()
 elif page == "Threat Detection":
     st.markdown("### Real-time Threat Detection")
     st.warning("This module is still under construction.")
-
-# Admin Panel Page
 elif page == "Admin Panel":
-    st.markdown("## 🛡️ Admin Dashboard")
-    summary = security_core.get_admin_dashboard_summary()
-    st.metric("Total Users", summary["total_users"])
-    st.metric("API Keys", summary["total_api_keys"])
-    st.metric("Critical Events", summary["critical_events"])
-    st.metric("Threat Indicators", summary["threat_indicators"])
-
-# User Management Page
-elif page == "User Management":
-    st.markdown("## 👥 User Management")
-    user_id = st.text_input("User ID")
-    action = st.selectbox("Admin Action", ["Suspend", "Reactivate", "Promote to Admin", "Demote to User"])
-    if st.button("Execute Action") and user_id:
-        if action == "Suspend":
-            security_core.suspend_user(user_id)
-        elif action == "Reactivate":
-            security_core.reactivate_user(user_id)
-        elif action == "Promote to Admin":
-            security_core.promote_to_admin(user_id)
-        elif action == "Demote to User":
-            security_core.demote_to_user(user_id)
-        st.success(f"{action} action applied to user.")
-
-
-# ✅ Instantiate core services
-security_core = SecurityCore()
-email_automation = EmailAutomation(security_core)
-email_events = EmailEventHandler(email_automation)
-billing_manager = BillingManager(security_core)
-setup_wizard = SetupWizard(security_core)
-
-# ✅ CSS Styling
-st.markdown("""
-<style>
-.main > div { padding-top: 1rem; }
-.hero-section {
- background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #4ade80 100%);
- padding: 2rem; border-radius: 15px; margin-bottom: 2rem;
- text-align: center; color: white;
-}
-.feature-card {
- background: white; padding: 2rem; border-radius: 12px;
- border: 1px solid #e2e8f0;
- box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 1.5rem;
- transition: transform 0.3s ease;
-}
-.feature-card:hover {
- transform: translateY(-2px);
- box-shadow: 0 8px 25px rgba(0,0,0,0.15);
-}
-.pricing-card {
- background: white; border: 2px solid #e2e8f0; border-radius: 20px;
- padding: 2rem; text-align: center; margin-bottom: 2rem;
- position: relative; transition: all 0.3s ease;
-}
-.pricing-card:hover { border-color: #4ade80; transform: scale(1.02); }
-.popular-badge {
- position: absolute; top: -15px; left: 50%; transform: translateX(-50%);
- background: #4ade80; color: white; padding: 0.5rem 1.5rem;
- border-radius: 25px; font-weight: bold; font-size: 0.9rem;
-}
-.status-badge {
- background: #f59e0b; color: white; padding: 0.25rem 1rem;
- border-radius: 20px; font-weight: bold; font-size: 0.8rem;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ✅ Auto-activate trial if token is in URL
-query_params = st.experimental_get_query_params()
-token_from_url = query_params.get("token", [None])[0]
-
-if token_from_url:
-    auto_activated = security_core.activate_trial_by_token(token_from_url)
-    if auto_activated:
-        st.success("✅ Trial activated successfully via link!")
+    if st.session_state.user_role != 'admin':
+        st.warning("🚫 Admins only")
     else:
-        st.error("❌ Invalid or expired token in URL.")
+        from admin_panel import render_admin_panel
+        render_admin_panel(security_core)
+elif page == "Admin Logs":
+    if st.session_state.user_role != 'admin':
+        st.warning("🚫 Admins only")
+    else:
+        from admin_logs import render_admin_logs
+        render_admin_logs(security_core)
 
-# ✅ Route by user role
-if st.session_state.user_role == 'admin':
-    st.sidebar.title("🔧 Admin Navigation")
-    admin_page = st.sidebar.selectbox("Go to", ["Admin Panel", "Threat Detection", "Billing"])
+# ✅ Threat Detection Visuals
+elif page == "Threat Detection":
+    st.markdown("### 📊 Threat Intelligence Dashboard")
+    try:
+        threat_data = pd.read_sql("""
+            SELECT timestamp, indicator, threat_type, confidence, source
+            FROM threat_intelligence
+            WHERE status = 'active'
+            ORDER BY timestamp DESC LIMIT 500
+        """, con=security_core.get_connection())
 
-    if admin_page == "Admin Panel":
-        st.markdown("## 👥 Admin Panel - Client Monitoring")
-        st.info("Live view of all registered clients and trial status")
-        response = supabase.table("users").select("*").execute()
-        if response.data:
-            df_clients = pd.DataFrame(response.data)
-            now = datetime.now()
-            for user in response.data:
-                if user.get("trial_ends") and datetime.fromisoformat(user["trial_ends"]) < now:
-                    supabase.table("users").update({"payment_status": "expired"}).eq("id", user["id"]).execute()
-            st.dataframe(df_clients)
-        else:
-            st.info("No clients found.")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Active Threats", value=len(threat_data))
+        with col2:
+            st.metric("Unique Indicators", value=threat_data['indicator'].nunique())
 
-    elif admin_page == "Threat Detection":
-        st.markdown("### Real-time Threat Detection")
-        events = security_core.fetch_security_events()
-        if not events:
-            st.info("No threats detected.")
-        else:
-            df = pd.DataFrame(events)
-            st.dataframe(df)
+        fig = px.histogram(threat_data, x='threat_type', title='Threats by Type', color='threat_type')
+        st.plotly_chart(fig, use_container_width=True)
 
-    elif admin_page == "Billing":
-        billing_manager.render_billing_ui()
+        line_fig = px.line(threat_data.sort_values("timestamp"), x="timestamp", y="confidence",
+                           color="threat_type", title="Threat Confidence Over Time")
+        st.plotly_chart(line_fig, use_container_width=True)
 
-else:
-    st.sidebar.title("🛡️ Client Navigation")
-    client_page = st.sidebar.selectbox("Go to", ["Setup Wizard", "Dashboard", "Billing", "Threat Detection", "Activate Trial"])
+        st.dataframe(threat_data.head(50))
 
-    if client_page == "Dashboard":
-        st.markdown("### Security Dashboard")
-        with st.spinner("Loading data..."):
-            uptime = round(99.5 + (random.random() * 0.5), 2)
-            threats = random.randint(3, 10)
-            st.metric("Uptime %", f"{uptime}%")
-            st.metric("Active Threats", f"{threats}")
+    except Exception as e:
+        st.error(f"Error loading threat data: {e}")
 
-    elif client_page == "Setup Wizard":
-        setup_wizard.render()
+# ✅ Auto-refresh (every 60s)
+        import time
+        refresh_interval = 60  # seconds
+        st.caption(f"⏱️ Auto-refreshes every {refresh_interval} seconds")
+        time.sleep(refresh_interval)
+        st.rerun()
 
-    elif client_page == "Billing":
-        st.markdown("## 💳 Upgrade Your Plan")
-        plans = billing_manager.get_plan_pricing()
-        selected_plan = st.selectbox("Choose a plan", list(plans.keys()))
-        billing_period = st.radio("Billing Period", ["monthly", "yearly"])
-        if st.button("Proceed to Checkout"):
-            session = billing_manager.create_checkout_session(
-                selected_plan,
-                billing_period,
-                st.session_state.user_email,
-                datetime.now()
+# ✅ Live refresh toggle
+        st.markdown("---")
+        col_export, col_refresh = st.columns([3, 1])
+
+        with col_export:
+            csv = threat_data.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="⬇️ Export Threat Data to CSV",
+                data=csv,
+                file_name='threat_intelligence.csv',
+                mime='text/csv'
             )
-            if "checkout_url" in session:
-                st.success("✅ Redirecting to Stripe...")
-                st.markdown(f"[Click here to pay securely]({session['checkout_url']})", unsafe_allow_html=True)
-            else:
-                st.error(f"❌ Error: {session.get('error', 'Unknown issue')}")
 
-    elif client_page == "Threat Detection":
-        st.markdown("### Real-time Threat Detection")
-        events = security_core.fetch_security_events()
-        if not events:
-            st.info("No threats detected.")
-        else:
-            df = pd.DataFrame(events)
-            st.dataframe(df)
+        with col_refresh:
+            if st.button("🔄 Refresh"):
+                st.rerun()
 
-    elif client_page == "Activate Trial":
-        st.markdown("## 🔓 Manually Activate Trial with Token")
-        token_input = st.text_input("Paste your activation token here:")
-        if st.button("Activate Trial"):
-            if token_input:
-                result = security_core.activate_trial_by_token(token_input)
-                if result:
-                    st.success("✅ Trial activated successfully!")
-                else:
-                    st.error("❌ Invalid or expired trial token.")
-            else:
-                st.warning("Please enter a token to activate.")
-
-
-
-
-
-
+    except Exception as e:
+        st.error(f"Error loading threat data: {e}")
 
 # Configure page
 st.set_page_config(
