@@ -1,17 +1,17 @@
 services:
   - type: web
-    name: myers-cybersecurity-platform
-    env: python
-    region: ohio
-    plan: free
+    name: myers-cybersecurity
+    env: docker
+    repo: https://github.com/YOUR_USERNAME/myersdigitalservicesAI
     branch: main
-    buildCommand: ""
-    startCommand: streamlit run app.py --server.port $PORT --server.enableCORS true --server.enableXsrfProtection true
+    plan: free
+    autoDeploy: true
     envVars:
       - key: ENVIRONMENT
         value: production
+      - key: SUPABASE_URL
+        value: YOUR_SUPABASE_URL
+      - key: SUPABASE_KEY
+        value: YOUR_SUPABASE_SERVICE_KEY
       - key: DOMAIN
-        value: https://myerscybersecurity.onrender.com
-      - key: FROM_EMAIL
-        value: support@myersdigitalservicesai.com
-      # The rest (API keys, DB URL) should be added directly in Render’s UI for security
+        value: https://myers-cybersecurity.onrender.com
