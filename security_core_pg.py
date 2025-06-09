@@ -153,7 +153,6 @@ class SecurityCore:
         conn.commit()
         conn.close()
 
-   
 
     def get_connection(self):
         """Get PostgreSQL database connection"""
