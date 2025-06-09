@@ -1,4 +1,4 @@
- class SecurityCore:
+class SecurityCore:
     def __init__(self):
         self.database_url = os.getenv('DATABASE_URL')
         self.init_database()
