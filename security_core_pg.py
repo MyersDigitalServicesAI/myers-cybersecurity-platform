@@ -1,3 +1,21 @@
+import logging
+from functools import wraps
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def log_api_call(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+            logging.info(f"{func.__name__} called with args={args[1:]}, kwargs={kwargs} - SUCCESS")
+            return result
+        except Exception as e:
+            logging.error(f"Error in {func.__name__}: {e}", exc_info=True)
+            raise
+    return wrapper
+
 class SecurityCore:
     def __init__(self):
         self.database_url = os.getenv('DATABASE_URL')
@@ -6,19 +24,16 @@ class SecurityCore:
         self.auto_update_threat_intel()
 
     def get_connection(self):
-        """Get PostgreSQL database connection"""
         return psycopg2.connect(self.database_url)
 
     def init_database(self):
-        """Create tables or perform DB setup (stub)"""
         pass
 
     def get_or_create_encryption_key(self):
-        """Load or generate encryption key (stub)"""
         return "your-secure-encryption-key"
 
+    @log_api_call
     def generate_trial_token(self, user_id):
-        """Generate and store a unique 30-day trial token for email links"""
         token = secrets.token_urlsafe(32)
         try:
             conn = self.get_connection()
@@ -35,11 +50,10 @@ class SecurityCore:
             print(f"Token generation error: {e}")
             return None
 
+    @log_api_call
     def get_security_events(self, user_id=None, limit=50):
-        """Get security events for user or all events"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         if user_id:
             cursor.execute('''
                 SELECT event_type, severity, description, source_ip, timestamp, resolved
@@ -51,33 +65,27 @@ class SecurityCore:
                 SELECT event_type, severity, description, source_ip, timestamp, resolved
                 FROM security_events ORDER BY timestamp DESC LIMIT %s
             ''', (limit,))
-
         results = cursor.fetchall()
         conn.close()
-
-        return [{'event_type': r[0], 'severity': r[1], 'description': r[2], 
+        return [{'event_type': r[0], 'severity': r[1], 'description': r[2],
                 'source_ip': r[3], 'timestamp': r[4].isoformat(), 'resolved': r[5]} for r in results]
 
+    @log_api_call
     def check_threat_intelligence(self, indicator):
-        """Check if indicator exists in threat intelligence database"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         cursor.execute('''
             SELECT threat_type, confidence, source, description
             FROM threat_intelligence WHERE indicator = %s AND status = 'active'
         ''', (indicator,))
-
         result = cursor.fetchone()
         conn.close()
-
         if result:
-            return {'threat_type': result[0], 'confidence': result[1], 
+            return {'threat_type': result[0], 'confidence': result[1],
                    'source': result[2], 'description': result[3]}
         return None
 
     def auto_update_threat_intel(self):
-        """Automatically update threat feeds every X hours (manual trigger placeholder)"""
         from threading import Timer
         def update():
             threat_detector = ThreatDetection(self)
@@ -86,32 +94,27 @@ class SecurityCore:
                 print("Threat intelligence updated successfully.")
             else:
                 print("Failed to update threat intelligence.")
-            Timer(3600, update).start()  # Re-run every hour
+            Timer(3600, update).start()
         update()
 
+    @log_api_call
     def get_admin_dashboard_summary(self):
-        """Return key admin metrics for dashboard display"""
         conn = self.get_connection()
         cursor = conn.cursor()
         summary = {}
-
         cursor.execute('SELECT COUNT(*) FROM users')
         summary['total_users'] = cursor.fetchone()[0]
-
         cursor.execute('SELECT COUNT(*) FROM api_keys')
         summary['total_api_keys'] = cursor.fetchone()[0]
-
         cursor.execute("SELECT COUNT(*) FROM security_events WHERE severity = 'critical'")
         summary['critical_events'] = cursor.fetchone()[0]
-
         cursor.execute("SELECT COUNT(*) FROM threat_intelligence")
         summary['threat_indicators'] = cursor.fetchone()[0]
-
         conn.close()
         return summary
 
+    @log_api_call
     def suspend_user(self, user_id):
-        """Suspend a user account"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
@@ -120,8 +123,8 @@ class SecurityCore:
         conn.commit()
         conn.close()
 
+    @log_api_call
     def reactivate_user(self, user_id):
-        """Reactivate a suspended user account"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
@@ -130,8 +133,8 @@ class SecurityCore:
         conn.commit()
         conn.close()
 
+    @log_api_call
     def promote_to_admin(self, user_id):
-        """Grant admin role to user"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
@@ -140,8 +143,8 @@ class SecurityCore:
         conn.commit()
         conn.close()
 
+    @log_api_call
     def demote_to_user(self, user_id):
-        """Revert admin to regular user role"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
@@ -149,6 +152,7 @@ class SecurityCore:
         """, (user_id,))
         conn.commit()
         conn.close()
+
    
 
     def get_connection(self):
