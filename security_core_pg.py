@@ -159,32 +159,50 @@ class SecurityCore:
         return psycopg2.connect(self.database_url)
 
     def init_database(self):
-        """Create tables or perform DB setup (stub)"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+
+    # Check if tables exist first
+    try:
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'users'
+            );
+        """)
+        result = cursor.fetchone()
+        tables_exist = result[0] if result else False
+
+        if tables_exist:
+            conn.close()
+            return
+    except Exception:
+        # Continue with table creation if check fails
         pass
 
-    def get_or_create_encryption_key(self):
-        """Load or generate encryption key (stub)"""
-        return "your-secure-encryption-key"
+def get_or_create_encryption_key(self):
+    """Load or generate encryption key (stub)"""
+    return "your-secure-encryption-key"
 
-    def generate_trial_token(self, user_id):
-        """Generate and store a unique 30-day trial token for email links"""
-        token = secrets.token_urlsafe(32)
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE users
-                SET trial_token = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
-            """, (token, user_id))
-            conn.commit()
-            conn.close()
-            return token
-        except Exception as e:
-            print(f"Token generation error: {e}")
-            return None
+def generate_trial_token(self, user_id):
+    """Generate and store a unique 30-day trial token for email links"""
+    token = secrets.token_urlsafe(32)
+    try:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET trial_token = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (token, user_id))
+        conn.commit()
+        conn.close()
+        return token
+    except Exception as e:
+        print(f"Token generation error: {e}")
+        return None
 
-    def activate_trial_by_token(self, token: str) -> bool:
+def activate_trial_by_token(self, token: str) -> bool:
     """Activates a user's trial account if the token is valid."""
     try:
         conn = self.get_connection()
@@ -219,29 +237,6 @@ class SecurityCore:
     except Exception as e:
         print(f"Activation error: {e}")
         return False
-
-   
-    def init_database(self):
-    conn = self.get_connection()
-    cursor = conn.cursor()
-    
-    # Check if tables exist first
-    try:
-        cursor.execute("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' AND table_name = 'users'
-            );
-        """)
-        result = cursor.fetchone()
-        tables_exist = result[0] if result else False
-
-        if tables_exist:
-            conn.close()
-            return
-    except Exception:
-        # Continue with table creation if check fails
-        pass
 
     # Users table
     cursor.execute('''
