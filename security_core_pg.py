@@ -167,8 +167,7 @@ class PaymentProcessor:
     def get_invoice_status(self, invoice_id):
         invoice = stripe.Invoice.retrieve(invoice_id)
         return invoice.status
-
-    def sanitize_input(self, input_text, max_length=255):
+        def sanitize_input(self, input_text, max_length=255):
         if not input_text:
             return ""
         sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', str(input_text))
@@ -343,3 +342,5 @@ class PaymentProcessor:
         keys = cursor.fetchall()
         conn.close()
         return keys
+
+    
