@@ -1,6 +1,4 @@
 # ===============================
-# Docker + GitHub Actions + Env Toggle Ready + Render Deployment
-# ===============================
 import streamlit as st
 import pandas as pd
 import random
@@ -37,7 +35,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ===========================
 # Email Sending Utilities
 # ===========================
-
 def send_email(to_email: str, subject: str, content: str):
     try:
         message = Mail(
@@ -63,6 +60,7 @@ def send_email_smtp(to_email: str, subject: str, content: str):
             server.starttls()
             server.login("apikey", SENDGRID_API_KEY)
             server.send_message(msg)
+
         print(f"SMTP email sent to {to_email}")
     except Exception as e:
         print(f"SMTP error: {e}")
@@ -78,14 +76,13 @@ st.set_page_config(
 # ===========================
 # Main App Entry Point
 # ===========================
-
 def main():
     st.title("🚀 Welcome to Myers Cybersecurity")
-    # ... rest of your logic ...
+    st.sidebar.markdown(f"**🔧 ENV: `{env_mode}`**")
+    # Add your page logic here...
 
 if __name__ == "__main__":
     main()
-
 
 st.sidebar.markdown(f"**🔧 ENV: `{env_mode}`**")
 
