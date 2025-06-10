@@ -36,6 +36,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ... [truncated for brevity] ...
+
+if __name__ == "__main__":
+    main()
+
 st.sidebar.markdown(f"**🔧 ENV: `{env_mode}`**")
 
 # ✅ GitHub Actions CI/CD YAML (for reference)
