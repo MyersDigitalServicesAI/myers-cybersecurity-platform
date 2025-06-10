@@ -144,6 +144,7 @@ class SecurityCore:
             return False, "Password must contain at least one number"
         return True, "Password is strong"
 
+
 class PaymentProcessor:
     def __init__(self):
         stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
