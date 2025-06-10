@@ -164,17 +164,10 @@ class PaymentProcessor:
     def cancel_subscription(self, subscription_id):
         stripe.Subscription.delete(subscription_id)
 
-    def get_invoice_status(self, invoice_id):
+   def get_invoice_status(self, invoice_id):
         invoice = stripe.Invoice.retrieve(invoice_id)
         return invoice.status
-        def sanitize_input(self, input_text, max_length=255):
-        if not input_text:
-            return ""
-        sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', str(input_text))
-        sanitized = sanitized.strip()[:max_length]
-        sanitized = sanitized.replace('<', '&lt;').replace('>', '&gt;')
-        sanitized = sanitized.replace('"', '&quot;').replace("'", '&#x27;')
-        return sanitized
+ 
 
     def encrypt_api_key(self, api_key):
         return self.encryption_key.encrypt(api_key.encode()).decode()
