@@ -96,17 +96,6 @@ class SecurityCore:
                 resolved BOOLEAN DEFAULT FALSE
             )''')
 
-            cursor.execute('''CREATE TABLE IF NOT EXISTS threat_intelligence (
-                id SERIAL PRIMARY KEY,
-                indicator VARCHAR(255) UNIQUE,
-                threat_type VARCHAR(100),
-                confidence INTEGER,
-                source VARCHAR(255),
-                description TEXT,
-                status VARCHAR(50) DEFAULT 'active',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )''')
-
             conn.commit()
         except Exception as e:
             logging.error(f"init_database error: {e}")
