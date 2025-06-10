@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+*.db
+.git
+.gitignore
+.DS_Store
+myers_security.db
