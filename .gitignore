@@ -1,39 +1,39 @@
-.env
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# ========================
+# Python + Streamlit App
+# ========================
 
-# PyInstaller
+# Environment & Secrets
+.env
+.venv/
+venv*/
+env*/
+ENV/
+.env.bak/
+venv.bak/
+
+# Python Compiled Files
+__pycache__/
+*.py[cod]
+.Python
+
+# Build & Packaging
+build/
+dist/
+*.egg*
+.eggs/
 *.manifest
 *.spec
+MANIFEST
 
-# Installer logs
+# Installer Logs
 pip-log.txt
 pip-delete-this-directory.txt
+.installed.cfg
 
-# Unit test / coverage reports
+# Test & Coverage
 htmlcov/
 .tox/
-.coverage
-.coverage.*
+.coverage*
 .cache
 nosetests.xml
 coverage.xml
@@ -45,61 +45,40 @@ coverage.xml
 *.mo
 *.pot
 
-# Django stuff:
+# Django & Flask
 *.log
 local_settings.py
 db.sqlite3
-
-# Flask stuff:
 instance/
 .webassets-cache
 
-# Scrapy stuff:
+# Scrapy
 .scrapy
 
-# Sphinx documentation
-docs/_build/
+# Documentation
+/docs/_build/
+/site
 
-# PyBuilder
-target/
+# IDE/Editor
+.spyderproject
+.spyproject
+.ropeproject
 
-# Jupyter Notebook
+# Jupyter
 .ipynb_checkpoints
 
 # pyenv
 .python-version
 
-# celery beat schedule file
+# Celery
 celerybeat-schedule
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
 
 # mypy
 .mypy_cache/
 .dmypy.json
 dmypy.json
 
-# Application specific
+# Project-Specific
 encryption.key
 myers_security.db
 myers_app.log
