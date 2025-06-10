@@ -9,9 +9,6 @@ services:
     envVars:
       - key: ENVIRONMENT
         value: production
-      - key: SUPABASE_URL
-        value: YOUR_SUPABASE_URL
-      - key: SUPABASE_KEY
-        value: YOUR_SUPABASE_SERVICE_KEY
       - key: DOMAIN
         value: https://myers-cybersecurity.onrender.com
+
