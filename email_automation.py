@@ -1,7 +1,9 @@
 """
 Email Automation System with SendGrid Integration
 Handles user lifecycle emails, trial notifications, and payment alerts
-"""import os
+"""
+
+import os
 import logging
 from datetime import datetime
 from typing import Dict
