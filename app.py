@@ -14,7 +14,7 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-from security_core_pg import SecurityCore, ThreatDetection, PaymentProcessor
+from security_core_pg import SecurityCore, PaymentProcessor
 from setup_wizard import SetupWizard
 from billing import BillingManager, SecurityAuditLogger, DiscountEngine
 from email_automation import EmailAutomation, EmailEventHandler
