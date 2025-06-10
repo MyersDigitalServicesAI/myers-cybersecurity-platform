@@ -1,59 +1,52 @@
-# ===============================
-import streamlit as st
-import pandas as pd
-import random
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import secrets
-import re
 import os
 import smtplib
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+import streamlit as st
 from supabase import create_client, Client
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
-# ✅ Load environment based on ENVIRONMENT variable
+# ===============================
+# Load environment (Render sets ENVIRONMENT=production by default)
 env_mode = os.getenv("ENVIRONMENT", "development")
-load_dotenv(dotenv_path=f".env.{env_mode}")
+load_dotenv(dotenv_path=f".env.{env_mode}", override=True)
 
-# ✅ Load secure credentials
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "noreply@yourdomain.com")
 DOMAIN = os.getenv("DOMAIN", "https://your-domain.com")
 
-# ✅ Validate Supabase setup early
+# Validate Supabase setup
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise EnvironmentError("Missing SUPABASE_URL or SUPABASE_KEY environment variables.")
 
-# ✅ Create Supabase client
+# ===============================
+# Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ===========================
-# Email Sending Utilities
-# ===========================
+# ===============================
+# Email Utilities
 def send_email(to_email: str, subject: str, content: str):
     try:
         message = Mail(
-            from_email="your@email.com",  # TODO: Replace with verified sender
+            from_email=EMAIL_SENDER,
             to_emails=to_email,
             subject=subject,
             plain_text_content=content
         )
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
-        print(f"Email sent to {to_email}: {response.status_code}")
+        st.success(f"Email sent to {to_email}")
     except Exception as e:
-        print(f"SendGrid API error: {e}")
+        st.error(f"SendGrid Error: {e}")
 
 def send_email_smtp(to_email: str, subject: str, content: str):
     try:
         msg = MIMEText(content)
         msg['Subject'] = subject
-        msg['From'] = "your@email.com"  # TODO: Replace with verified sender
+        msg['From'] = EMAIL_SENDER
         msg['To'] = to_email
 
         with smtplib.SMTP("smtp.sendgrid.net", 587) as server:
@@ -61,30 +54,32 @@ def send_email_smtp(to_email: str, subject: str, content: str):
             server.login("apikey", SENDGRID_API_KEY)
             server.send_message(msg)
 
-        print(f"SMTP email sent to {to_email}")
+        st.success(f"SMTP email sent to {to_email}")
     except Exception as e:
-        print(f"SMTP error: {e}")
+        st.error(f"SMTP Error: {e}")
 
-# ✅ Streamlit page config (must run before rendering anything)
+# ===============================
+# Streamlit Config
 st.set_page_config(
-    page_title="Myers Cybersecurity - Enterprise Security Platform",
+    page_title="Myers Cybersecurity Platform",
     page_icon="🔐",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ===========================
-# Main App Entry Point
-# ===========================
+# ===============================
+# Main UI
 def main():
     st.title("🚀 Welcome to Myers Cybersecurity")
-    st.sidebar.markdown(f"**🔧 ENV: `{env_mode}`**")
-    # Add your page logic here...
+    st.sidebar.markdown(f"**Environment: `{env_mode}`**")
+    st.sidebar.markdown(f"**Domain: `{DOMAIN}`**")
+
+    # Demo test email
+    if st.button("Send Test Email"):
+        send_email("test@example.com", "Test from Myers Platform", "This is a test email.")
 
 if __name__ == "__main__":
     main()
-
-st.sidebar.markdown(f"**🔧 ENV: `{env_mode}`**")
 
 # ✅ GitHub Actions CI/CD YAML (for reference)
 # .github/workflows/deploy.yml
