@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 from email_validator import validate_email, EmailNotValidError
 import logging
 from functools import wraps
+import stripe
 
 # Logging configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -35,6 +36,7 @@ class SecurityCore:
         return psycopg2.connect(self.database_url)
 
     def init_database(self):
+        conn = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -98,7 +100,8 @@ class SecurityCore:
 
             conn.commit()
         except Exception as e:
-            logging.error(f"init_database error: {e}")
+            logging.error(f"Database initialization failed: {e}", exc_info=True)
+            raise
         finally:
             if conn:
                 conn.close()
@@ -139,9 +142,31 @@ class SecurityCore:
             return False, "Password must contain at least one lowercase letter"
         if not re.search(r"\d", password):
             return False, "Password must contain at least one number"
-        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-            return False, "Password must contain at least one special character"
-        return True, "Password meets security requirements"
+        return True, "Password is strong"
+
+class PaymentProcessor:
+    def __init__(self):
+        stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+
+    def create_customer(self, email):
+        customer = stripe.Customer.create(email=email)
+        return customer.id
+
+    def create_subscription(self, customer_id, price_id):
+        subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{"price": price_id}],
+            payment_behavior='default_incomplete',
+            expand=["latest_invoice.payment_intent"]
+        )
+        return subscription
+
+    def cancel_subscription(self, subscription_id):
+        stripe.Subscription.delete(subscription_id)
+
+    def get_invoice_status(self, invoice_id):
+        invoice = stripe.Invoice.retrieve(invoice_id)
+        return invoice.status
 
     def sanitize_input(self, input_text, max_length=255):
         if not input_text:
