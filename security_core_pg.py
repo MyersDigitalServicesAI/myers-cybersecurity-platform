@@ -310,7 +310,20 @@ class SecurityCore:
         cursor.execute('SELECT id, name, encrypted_key, service, permissions, created_at FROM api_keys WHERE user_id = %s', (user_id,))
         keys = cursor.fetchall()
         conn.close()
-        return keys
+        # Return a list of dicts for easier usage in Streamlit, etc.
+        return [
+            {
+                'id': row[0],
+                'name': row[1],
+                'key': self.decrypt_api_key(row[2]),
+                'service': row[3],
+                'permissions': row[4],
+                'created_at': row[5],
+                'last_used': None,  # Extend your table schema if you want to track this
+                'status': 'active'  # You can improve by adding a status column
+            }
+            for row in keys
+        ]
 
     # Helper: sanitize input
     def sanitize_input(self, val, maxlen):
@@ -330,3 +343,22 @@ class SecurityCore:
         conn.commit()
         conn.close()
         return event_id
+
+# ---- STRIPE PAYMENT PROCESSOR ----
+class PaymentProcessor:
+    def __init__(self):
+        stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+
+    def create_checkout_session(self, price_id, customer_email, success_url, cancel_url):
+        try:
+            session = stripe.checkout.Session.create(
+                payment_method_types=['card'],
+                line_items=[{'price': price_id, 'quantity': 1}],
+                mode='subscription',
+                customer_email=customer_email,
+                success_url=success_url,
+                cancel_url=cancel_url,
+            )
+            return {"checkout_url": session.url}
+        except Exception as e:
+            return {"error": str(e)}
