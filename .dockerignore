@@ -1,11 +1,39 @@
+# Python bytecode and cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Virtual environments
 .env
-.venv
+.venv/
+venv/
+env/
+ENV/
+
+# Database files
 *.db
-.git
-.gitignore
-.DS_Store
 myers_security.db
+
+# Git and VCS
+.git
+
+# Editor & OS junk
+.DS_Store
+Thumbs.db
+
+# Project-specific secrets/logs
+*.log
+
+# Streamlit secrets/config
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# Supabase CLI local artifacts
+.supabase/
+
+# Node modules (if used)
+node_modules/
+
+# Ignore the .gitignore file itself (optional)
+.gitignore
