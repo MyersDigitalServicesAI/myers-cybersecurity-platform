@@ -2,7 +2,7 @@ services:
   - type: web
     name: myers-cybersecurity
     env: docker
-    repo: https://github.com/YOUR_USERNAME/myersdigitalservicesAI
+    repo: https://github.com/myersdigitalservicesai/myersdigitalservicesAI
     branch: main
     plan: free
     autoDeploy: true
@@ -11,4 +11,3 @@ services:
         value: production
       - key: DOMAIN
         value: https://myers-cybersecurity.onrender.com
-
