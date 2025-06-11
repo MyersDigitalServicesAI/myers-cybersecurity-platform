@@ -359,7 +359,7 @@ class SetupWizard:
         
         try:
             # Create admin user
-            user_id = self.security_core.create_user(
+            user_id, msg = self.security_core.create_user(
                 email=setup_data['admin_email'],
                 password=setup_data['admin_password'],
                 company=setup_data['company_name'],
@@ -415,7 +415,7 @@ class SetupWizard:
                 st.session_state.current_page = 'dashboard'
                 st.rerun()
             else:
-                st.error("Setup failed: Email address already exists")
+                st.error(f"Setup failed: {msg}")
                 
         except Exception as e:
             st.error(f"Setup failed: {str(e)}")
