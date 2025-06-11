@@ -63,6 +63,10 @@ instance/
 .spyderproject
 .spyproject
 .ropeproject
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
 
 # Jupyter
 .ipynb_checkpoints
@@ -84,3 +88,21 @@ myers_security.db
 myers_app.log
 *.db
 .streamlit/
+.streamlit/config.toml
+.streamlit/secrets.toml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node (if ever used)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Render.com deployment artifacts (if any)
+render.yaml
+
+# Supabase auto-generated (if using supabase CLI locally)
+.supabase/
