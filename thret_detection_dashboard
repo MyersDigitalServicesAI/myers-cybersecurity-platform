@@ -1,0 +1,57 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import time
+
+def show_threat_detection_dashboard(security_core):
+    st.markdown("### 📊 Threat Intelligence Dashboard")
+    try:
+        threat_data = pd.read_sql(
+            """
+            SELECT timestamp, indicator, threat_type, confidence, source
+            FROM threat_intelligence
+            WHERE status = 'active'
+            ORDER BY timestamp DESC LIMIT 500
+            """,
+            con=security_core.get_connection()
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Active Threats", value=len(threat_data))
+        with col2:
+            st.metric("Unique Indicators", value=threat_data['indicator'].nunique())
+
+        fig = px.histogram(threat_data, x='threat_type', title='Threats by Type', color='threat_type')
+        st.plotly_chart(fig, use_container_width=True)
+
+        line_fig = px.line(
+            threat_data.sort_values("timestamp"),
+            x="timestamp", y="confidence",
+            color="threat_type",
+            title="Threat Confidence Over Time"
+        )
+        st.plotly_chart(line_fig, use_container_width=True)
+
+        st.dataframe(threat_data.head(50))
+
+        # Export and refresh controls
+        st.markdown("---")
+        col_export, col_refresh = st.columns([3, 1])
+        with col_export:
+            csv = threat_data.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="⬇️ Export Threat Data to CSV",
+                data=csv,
+                file_name='threat_intelligence.csv',
+                mime='text/csv'
+            )
+        with col_refresh:
+            if st.button("🔄 Refresh"):
+                st.rerun()
+
+        st.caption("⏱️ Auto-refreshes every 60 seconds")
+        time.sleep(60)
+        st.rerun()
+    except Exception as e:
+        st.error(f"Error loading threat data: {e}")
