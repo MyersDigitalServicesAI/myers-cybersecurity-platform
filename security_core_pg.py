@@ -10,10 +10,10 @@ from email_validator import validate_email, EmailNotValidError
 import logging
 from functools import wraps
 import stripe
-   
+
 # Logging configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-       
+
 def log_api_call(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -25,16 +25,16 @@ def log_api_call(func):
             logging.error(f"Error in {func.__name__}: {e}", exc_info=True)
             raise
     return wrapper
-          
+
 class SecurityCore:
     def __init__(self):
         self.database_url = os.getenv('DATABASE_URL')
         self.encryption_key = self.get_or_create_encryption_key()
         self.init_database()
-         
+
     def get_connection(self):
         return psycopg2.connect(self.database_url)
-           
+
     def init_database(self):
         conn = None
         try:
@@ -50,7 +50,7 @@ class SecurityCore:
             if result and result[0]:
                 conn.close()
                 return
-               
+
             cursor.execute('''CREATE TABLE IF NOT EXISTS users (
                 id VARCHAR(255) PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL,
@@ -75,7 +75,7 @@ class SecurityCore:
                 payment_status VARCHAR(50) DEFAULT 'trial',
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )''')
-             
+
             cursor.execute('''CREATE TABLE IF NOT EXISTS api_keys (
                 id VARCHAR(255) PRIMARY KEY,
                 user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
@@ -85,7 +85,7 @@ class SecurityCore:
                 permissions VARCHAR(50) DEFAULT 'read',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )''')
-             
+
             cursor.execute('''CREATE TABLE IF NOT EXISTS security_events (
                 id VARCHAR(255) PRIMARY KEY,
                 user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
@@ -97,7 +97,7 @@ class SecurityCore:
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 resolved BOOLEAN DEFAULT FALSE
             )''')
-        
+
             conn.commit()
         except Exception as e:
             logging.error(f"Database initialization failed: {e}", exc_info=True)
@@ -105,7 +105,7 @@ class SecurityCore:
         finally:
             if conn:
                 conn.close()
-        
+
     def get_or_create_encryption_key(self):
         key_path = 'encryption.key'
         if os.path.exists(key_path):
@@ -116,23 +116,23 @@ class SecurityCore:
             with open(key_path, 'wb') as key_file:
                 key_file.write(key)
             return Fernet(key)
-               
+
     def hash_password(self, password):
         return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-          
+
     def verify_password(self, password, hash_string):
         try:
             return bcrypt.checkpw(password.encode('utf-8'), hash_string.encode('utf-8'))
         except Exception:
             return False
-        
+
     def validate_email_input(self, email):
         try:
             validated_email = validate_email(email)
             return validated_email.email
         except EmailNotValidError:
             return None
-        
+
     def validate_password_strength(self, password):
         if len(password) < 8:
             return False, "Password must be at least 8 characters long"
@@ -143,39 +143,14 @@ class SecurityCore:
         if not re.search(r"\d", password):
             return False, "Password must contain at least one number"
         return True, "Password is strong"
-        
-       
-class PaymentProcessor:
-    def __init__(self):
-        stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-    
-    def create_customer(self, email):
-        customer = stripe.Customer.create(email=email)
-        return customer.id
-    
-    def create_subscription(self, customer_id, price_id):
-        subscription = stripe.Subscription.create(
-            customer=customer_id,
-            items=[{"price": price_id}],
-            payment_behavior='default_incomplete',
-            expand=["latest_invoice.payment_intent"]
-        )
-        return subscription
 
-    def cancel_subscription(self, subscription_id):
-        stripe.Subscription.delete(subscription_id)
-   
-    def get_invoice_status(self, invoice_id):
-        invoice = stripe.Invoice.retrieve(invoice_id)
-        return invoice.status
-     
-      
+    # Encryption helpers
     def encrypt_api_key(self, api_key):
         return self.encryption_key.encrypt(api_key.encode()).decode()
-             
+
     def decrypt_api_key(self, encrypted_key):
         return self.encryption_key.decrypt(encrypted_key.encode()).decode()
-      
+
     @log_api_call
     def promote_to_admin(self, user_id):
         conn = self.get_connection()
@@ -185,7 +160,7 @@ class PaymentProcessor:
         """, (user_id,))
         conn.commit()
         conn.close()
-             
+
     @log_api_call
     def demote_to_user(self, user_id):
         conn = self.get_connection()
@@ -195,7 +170,7 @@ class PaymentProcessor:
         """, (user_id,))
         conn.commit()
         conn.close()
-      
+
     def create_user(self, email, password, company, first_name, last_name, plan, phone="", job_title="", billing_period="monthly"):
         validated_email = self.validate_email_input(email)
         if not validated_email:
@@ -235,7 +210,7 @@ class PaymentProcessor:
             return None, f"Database error: {str(e)}"
         finally:
             conn.close()
-      
+
     def get_trial_discount_eligibility(self, user_id):
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -247,17 +222,17 @@ class PaymentProcessor:
         trial_start = result[0]
         days_since_trial = (datetime.now() - trial_start).days
         return days_since_trial <= 15
-     
+
     def calculate_discounted_price(self, base_price, plan_name, billing_period="monthly", user_id=None):
         discounts = []
         final_price = base_price - 10
         discounts.append("$10 auto-renewal savings")
-     
+
         if billing_period == "yearly":
             yearly_price = final_price * 10
             yearly_savings = (base_price * 12) - yearly_price
             discounts.append(f"2 months FREE (save ${yearly_savings}/year)")
-         
+
             trial_discount = 0
             if user_id and self.get_trial_discount_eligibility(user_id):
                 trial_discount = yearly_price * 0.25
@@ -336,3 +311,22 @@ class PaymentProcessor:
         keys = cursor.fetchall()
         conn.close()
         return keys
+
+    # Helper: sanitize input
+    def sanitize_input(self, val, maxlen):
+        if not val:
+            return ""
+        return str(val)[:maxlen] if len(str(val)) > maxlen else str(val)
+
+    def log_security_event(self, user_id, event_type, severity, description, source_ip=None, metadata=None, resolved=False):
+        event_id = secrets.token_urlsafe(16)
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO security_events 
+                (id, user_id, event_type, severity, description, source_ip, metadata, resolved)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (event_id, user_id, event_type, severity, description, source_ip, json.dumps(metadata) if metadata else None, resolved))
+        conn.commit()
+        conn.close()
+        return event_id
