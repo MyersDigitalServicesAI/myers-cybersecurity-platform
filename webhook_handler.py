@@ -7,8 +7,8 @@ import json
 import logging
 from datetime import datetime
 from flask import Flask, request, jsonify
-from security_core_pg import SecurityCore
-from billing import BillingManager
+from security_core import SecurityCore
+from billing_manager import BillingManager
 from email_automation import EmailAutomation, EmailEventHandler
 from dotenv import load_dotenv
 
@@ -81,10 +81,11 @@ def handle_payment_completed(event_data):
             conn.commit()
             
             # Log successful payment
-            security_core.log_security_event(
-                user_id, 'payment_completed', 'info',
-                f'Payment completed successfully for subscription {subscription_id}'
-            )
+            if hasattr(security_core, "log_security_event"):
+                security_core.log_security_event(
+                    user_id, 'payment_completed', 'info',
+                    f'Payment completed successfully for subscription {subscription_id}'
+                )
             
             logger.info(f"Payment completed for user {customer_email}")
         
@@ -127,10 +128,11 @@ def handle_payment_failed(event_data):
             email_handler.handle_payment_failed(user_id, invoice_details)
             
             # Log payment failure
-            security_core.log_security_event(
-                user_id, 'payment_failed', 'warning',
-                f'Payment failed for subscription {subscription_id}'
-            )
+            if hasattr(security_core, "log_security_event"):
+                security_core.log_security_event(
+                    user_id, 'payment_failed', 'warning',
+                    f'Payment failed for subscription {subscription_id}'
+                )
             
             logger.warning(f"Payment failed for user {email}")
         
@@ -169,10 +171,11 @@ def handle_subscription_cancelled(event_data):
             email_handler.handle_subscription_cancelled(user_id)
             
             # Log cancellation
-            security_core.log_security_event(
-                user_id, 'subscription_cancelled', 'info',
-                f'Subscription cancelled: {subscription_id}'
-            )
+            if hasattr(security_core, "log_security_event"):
+                security_core.log_security_event(
+                    user_id, 'subscription_cancelled', 'info',
+                    f'Subscription cancelled: {subscription_id}'
+                )
             
             logger.info(f"Subscription cancelled: {subscription_id}")
         
