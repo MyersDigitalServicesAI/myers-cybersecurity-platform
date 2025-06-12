@@ -1,678 +1,643 @@
+# security_core_pg.py
 import os
-import logging
+import secrets
+import json
+import bcrypt
+import re
 from datetime import datetime, timedelta
-from typing import Dict, Any # Use Any for more flexible type hinting
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Personalization, To, From, Subject, HtmlContent, PlainTextContent
+from cryptography.fernet import Fernet
+from email_validator import validate_email, EmailNotValidError
+import logging
+from functools import wraps
+import random
+from dotenv import load_dotenv
+import psycopg2 # Keep for specific error handling
 
-# Import the centralized Supabase client
-from src.config.supabase_client import supabase, supabase_admin # Adjust path as needed
+from utils.database import get_db_connection # Import the new database utility
 
-# --- MOCK SECURITY CORE FOR DEMONSTRATION ---
-# In your actual application, this class would have real methods
-# to interact with your Supabase database using the 'supabase' client.
-class MockSecurityCore:
-    def __init__(self):
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("MockSecurityCore")
+load_dotenv()
 
-    def get_user_details(self, user_id: str) -> Dict[str, Any] | None:
-        """
-        Mocks fetching user details from Supabase.
-        In a real scenario, this would query the 'users' table using the 'supabase' client.
-        """
-        self.logger.info(f"Mocking user details fetch for user_id: {user_id}")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def log_api_call(func):
+    """Decorator to log API calls."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
         try:
-            # This is where your real implementation would query Supabase
-            # using the 'supabase' client from supabase_client.py
-            response = supabase.table("users").select("*").eq("id", user_id).single().execute()
-            if response.data:
-                return response.data
-            else:
-                self.logger.warning(f"No user found with ID: {user_id}")
-                return None
+            result = func(*args, **kwargs)
+            logger.info(f"{func.__name__} called with args={args[1:]}, kwargs={kwargs} - SUCCESS")
+            return result
         except Exception as e:
-            self.logger.error(f"Error fetching user details for {user_id}: {e}")
+            logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
+            raise
+    return wrapper
+
+class SecurityCore:
+    def __init__(self):
+        # Database connection is now handled by get_db_connection from utils/database.py
+        self.encryption_key = self.get_or_create_encryption_key()
+        self.init_database()
+
+    def init_database(self):
+        """
+        Initializes the database schema, creating tables and columns if they don't exist.
+        Includes schema for users, API keys, security events, threat intelligence,
+        and processed webhook events.
+        """
+        conn = None
+        try:
+            conn = get_db_connection() # Use the utility function
+            cursor = conn.cursor()
+
+            # --- Users Table ---
+            logger.info("Checking/Creating 'users' table and columns...")
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id VARCHAR(255) PRIMARY KEY,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    company VARCHAR(255) NOT NULL,
+                    first_name VARCHAR(255) NOT NULL,
+                    last_name VARCHAR(255) NOT NULL,
+                    phone VARCHAR(50),
+                    job_title VARCHAR(255),
+                    plan VARCHAR(50) NOT NULL,
+                    role VARCHAR(50) DEFAULT 'user',
+                    status VARCHAR(50) DEFAULT 'active',
+                    trial_start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    trial_end_date TIMESTAMP,
+                    is_trial BOOLEAN DEFAULT TRUE,
+                    billing_period VARCHAR(20) DEFAULT 'monthly',
+                    auto_renewal BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_login TIMESTAMP,
+                    trial_ends TIMESTAMP,
+                    trial_token VARCHAR(255),
+                    payment_status VARCHAR(50) DEFAULT 'trial',
+                    email_token VARCHAR(255),
+                    email_verified BOOLEAN DEFAULT FALSE,
+                    subscription_id VARCHAR(255) UNIQUE NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # Add missing columns to 'users' if they don't exist
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'users' AND column_name = 'subscription_id';
+            """)
+            if not cursor.fetchone():
+                logger.info("Adding subscription_id column to users table...")
+                cursor.execute("ALTER TABLE users ADD COLUMN subscription_id VARCHAR(255) UNIQUE NULL;")
+                conn.commit()
+
+            # --- API Keys Table ---
+            logger.info("Checking/Creating 'api_keys' table...")
+            cursor.execute('''CREATE TABLE IF NOT EXISTS api_keys (
+                id VARCHAR(255) PRIMARY KEY,
+                user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+                name VARCHAR(255) NOT NULL,
+                encrypted_key TEXT NOT NULL,
+                service VARCHAR(255) NOT NULL,
+                permissions VARCHAR(50) DEFAULT 'read',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )''')
+
+            # --- Security Events Table ---
+            logger.info("Checking/Creating 'security_events' table...")
+            cursor.execute('''CREATE TABLE IF NOT EXISTS security_events (
+                id VARCHAR(255) PRIMARY KEY,
+                user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+                event_type VARCHAR(100),
+                severity VARCHAR(50),
+                description TEXT,
+                source_ip VARCHAR(50),
+                metadata JSONB,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved BOOLEAN DEFAULT FALSE
+            )''')
+
+            # --- Threat Intelligence Table ---
+            logger.info("Checking/Creating 'threat_intelligence' table...")
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS threat_intelligence (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    indicator VARCHAR(255) NOT NULL,
+                    threat_type VARCHAR(100) NOT NULL,
+                    confidence INTEGER,
+                    source VARCHAR(100),
+                    status VARCHAR(50) DEFAULT 'active',
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # --- Processed Webhook Events Table (for Idempotency) ---
+            logger.info("Checking/Creating 'processed_webhook_events' table...")
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS processed_webhook_events (
+                    event_id VARCHAR(255) PRIMARY KEY,
+                    event_type VARCHAR(100),
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            conn.commit()
+            logger.info("Database initialization/migration complete.")
+        except Exception as e:
+            logger.critical(f"Database initialization failed: {e}", exc_info=True)
+            raise
+        finally:
+            if conn:
+                conn.close()
+
+    def get_or_create_encryption_key(self):
+        """Retrieves or generates the encryption key for API keys."""
+        key_path = 'encryption.key'
+        if os.path.exists(key_path):
+            with open(key_path, 'rb') as key_file:
+                return Fernet(key_file.read())
+        else:
+            key = Fernet.generate_key()
+            with open(key_path, 'wb') as key_file:
+                key_file.write(key)
+            return Fernet(key)
+
+    def hash_password(self, password):
+        """Hashes a password using bcrypt."""
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+    def verify_password(self, password, hash_string):
+        """Verifies a password against a hash."""
+        try:
+            return bcrypt.checkpw(password.encode('utf-8'), hash_string.encode('utf-8'))
+        except Exception:
+            return False
+
+    def validate_email_input(self, email):
+        """Validates email format using email_validator."""
+        try:
+            validated_email = validate_email(email)
+            return validated_email.email
+        except EmailNotValidError:
             return None
 
-# --- END MOCK ---
+    def validate_password_strength(self, password):
+        """Validates password strength (length, uppercase, lowercase, digit)."""
+        if len(password) < 8:
+            return False, "Password must be at least 8 characters long"
+        if not re.search(r"[A-Z]", password):
+            return False, "Password must contain at least one uppercase letter"
+        if not re.search(r"[a-z]", password):
+            return False, "Password must contain at least one lowercase letter"
+        if not re.search(r"\d", password):
+            return False, "Password must contain at least one number"
+        return True, "Password is strong"
 
+    def encrypt_api_key(self, api_key):
+        """Encrypts an API key."""
+        return self.encryption_key.encrypt(api_key.encode()).decode()
 
-class EmailAutomation:
-    def __init__(self, security_core: Any): # Type hint with Any for flexibility
-        self.security_core = security_core
-        self.sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
-        self.from_email = os.getenv('FROM_EMAIL', 'noreply@myerscybersecurity.com')
-        self.company_name = "Myers Cybersecurity"
-        # Get the domain from environment variables for dynamic link generation
-        self.app_domain = os.getenv('DOMAIN', 'https://myers-cybersecurity.onrender.com')
+    def decrypt_api_key(self, encrypted_key):
+        """Decrypts an API key."""
+        return self.encryption_key.decrypt(encrypted_key.encode()).decode()
 
-        if self.sendgrid_api_key:
-            self.sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
-        else:
-            self.sg = None
-            logging.error("SENDGRID_API_KEY not found. Email sending will be disabled.")
-
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
-
-    def send_email(self, to_email: str, subject: str, html_content: str, plain_content: str = "") -> bool:
-        if not self.sg:
-            self.logger.error(f"SendGrid client not configured. Cannot send email to {to_email}.")
-            return False
-
-        if not to_email:
-            self.logger.error(f"Attempted to send email with empty 'to_email' for subject: {subject}")
-            return False
-
+    @log_api_call
+    def promote_to_admin(self, user_id):
+        """Promotes a user to admin role."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
         try:
-            # Ensure proper email address format
-            from_addr = From(self.from_email, self.company_name)
-            to_addr = To(to_email) # SendGrid handles basic email validation
-
-            mail = Mail(
-                from_email=from_addr,
-                to_emails=to_addr,
-                subject=Subject(subject),
-                html_content=HtmlContent(html_content)
-            )
-            if plain_content:
-                mail.plain_text_content = PlainTextContent(plain_content)
-
-            # SendGrid API call
-            response = self.sg.send(mail)
-            if response.status_code == 202:
-                self.logger.info(f"Email sent successfully to {to_email} with subject: {subject}")
-                return True
-            else:
-                self.logger.error(f"Failed to send email to {to_email}. Status: {response.status_code}, Body: {response.body}, Headers: {response.headers}")
-                return False
+            cursor.execute("""
+                UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE id = %s
+            """, (user_id,))
+            conn.commit()
+            logger.info(f"User {user_id} promoted to admin.")
         except Exception as e:
-            self.logger.error(f"Failed to send email to {to_email} due to exception: {e}", exc_info=True)
-            return False
+            logger.error(f"Error promoting user {user_id} to admin: {e}", exc_info=True)
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
-    def send_welcome_email(self, user_id: str, user_details: Dict) -> bool:
-        subject = f"Welcome to {self.company_name} - Your Cybersecurity Journey Begins"
-        # Ensure user_details contains 'email'
-        if not user_details.get('email'):
-            self.logger.error(f"Cannot send welcome email: user_details missing email for user_id {user_id}")
-            return False
-
-        # Use app_domain for all links
-        trial_token = user_details.get("trial_token", "default_token") # Provide a fallback
-        dashboard_link = f"{self.app_domain}/activate?token={trial_token}"
-
-        html_content = f"""
-        <html>
-        <head>
-        <style>
-            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }}
-            .content {{ padding: 30px; }}
-            .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
-            .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }}
-            .footer {{ background: #f1f1f1; padding: 20px; text-align: center; font-size: 12px; }}
-        </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>Welcome to {self.company_name}!</h1>
-                <p>Enterprise Cybersecurity Made Simple</p>
-            </div>
-
-            <div class="content">
-                <h2>Hello {user_details.get('first_name', 'there')}!</h2>
-                <p>Thank you for joining {self.company_name}. Your 30-day free trial has started, giving you full access to our enterprise cybersecurity platform.</p>
-
-                <div class="features">
-                    <h3>Your {user_details.get('plan', 'Professional').title()} Plan Includes:</h3>
-                    <ul>
-                        <li>🔐 Encrypted API key management</li>
-                        <li>🛡️ Real-time threat detection</li>
-                        <li>📊 Advanced security analytics</li>
-                        <li>🚨 24/7 security monitoring</li>
-                        <li>📞 Priority customer support</li>
-                    </ul>
-                </div>
-
-                <p><strong>Special Offer:</strong> Convert to a paid plan within 15 days and get <strong>25% off</strong> your first year!</p>
-                <a href="{dashboard_link}" class="button">Activate Your Trial</a>
-
-                <h3>Next Steps:</h3>
-                <ol>
-                    <li>Add your first API keys for monitoring</li>
-                    <li>Review your security analytics dashboard</li>
-                    <li>Configure threat detection alerts</li>
-                    <li>Explore our advanced features</li>
-                </ol>
-
-                <p>Need help getting started? Our support team is here to assist you.</p>
-            </div>
-
-            <div class="footer">
-                <p>&copy; 2024 {self.company_name}. All rights reserved.</p>
-                <p>Contact us: support@myerscybersecurity.com | 1-800-CYBER-SEC</p>
-            </div>
-        </body>
-        </html>
-        """
-
-        plain_content = f"""
-        Welcome to {self.company_name}!
-
-        Hello {user_details.get('first_name', 'there')}!
-
-        Your 30-day free trial has started.
-
-        Activate here: {dashboard_link}
-
-        Plan: {user_details.get('plan', 'Professional').title()}
-        """
-
-        return self.send_email(user_details['email'], subject, html_content, plain_content)
-
-    def send_trial_reminder(self, user_id: str, days_remaining: int) -> bool:
-        """Send trial expiration reminder"""
-        user_details = self.security_core.get_user_details(user_id)
-        if not user_details or not user_details.get('email'):
-            self.logger.warning(f"Could not retrieve user details or email for user_id {user_id} to send trial reminder.")
-            return False
-
-        discount_eligible = days_remaining <= 15
-        
-        if days_remaining == 7:
-            subject = f"Your {self.company_name} trial expires in 7 days - Don't lose access!"
-        elif days_remaining == 3:
-            subject = f"Final reminder: Your {self.company_name} trial expires in 3 days"
-        elif days_remaining == 1:
-            subject = f"Last chance: Your {self.company_name} trial expires tomorrow!"
-        else:
-            subject = f"Trial reminder: {days_remaining} days remaining for {self.company_name}"
-        
-        # Use app_domain for all links
-        pricing_link = f"{self.app_domain}/pricing"
-
-        html_content = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .urgent {{ background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); color: white; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0; }}
-                .content {{ padding: 20px; }}
-                .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
-                .discount {{ background: #d4edda; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745; }}
-            </style>
-        </head>
-        <body>
-            <div class="urgent">
-                <h2>⏰ Your trial expires in {days_remaining} day{'s' if days_remaining != 1 else ''}!</h2>
-            </div>
-            
-            <div class="content">
-                <p>Hi {user_details.get('first_name', 'there')},</p>
-                
-                <p>Your {self.company_name} trial is ending soon. Don't lose access to your cybersecurity dashboard and threat monitoring.</p>
-                
-                {'<div class="discount"><h3>🎉 Limited Time: 25% OFF!</h3><p>Convert now and save 25% on your first year!</p></div>' if discount_eligible else ''}
-                
-                <p><strong>What you\'ll lose without upgrading:</strong></p>
-                <ul>
-                    <li>Real-time threat detection</li>
-                    <li>API key security monitoring</li>
-                    <li>Advanced analytics dashboard</li>
-                    <li>24/7 security alerts</li>
-                </ul>
-                
-                <a href="{pricing_link}" class="button">Upgrade Now - From ${user_details.get('plan_price', 39)}/month</a>
-                
-                <p>Questions? Reply to this email or contact our support team.</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        plain_content = f"""
-        Your trial expires in {days_remaining} day{'s' if days_remaining != 1 else ''}!
-
-        Hi {user_details.get('first_name', 'there')},
-
-        Your {self.company_name} trial is ending soon. Don't lose access to your cybersecurity dashboard and threat monitoring.
-
-        {"Limited Time: 25% OFF! Convert now and save 25% on your first year!" if discount_eligible else ""}
-
-        Upgrade Now: {pricing_link}
-
-        Questions? Reply to this email or contact our support team.
-        """
-
-        return self.send_email(
-            user_details['email'], subject, html_content, plain_content
-        )
-    
-    def send_payment_failed_email(self, user_id: str, invoice_details: Dict) -> bool:
-        """Send payment failed notification"""
-        user_details = self.security_core.get_user_details(user_id)
-        if not user_details or not user_details.get('email'):
-            self.logger.warning(f"Could not retrieve user details or email for user_id {user_id} to send payment failed email.")
-            return False
-        
-        subject = f"Payment Failed for {self.company_name} - Action Required for Your Account"
-        
-        # Use app_domain for all links
-        billing_link = f"{self.app_domain}/billing"
-        
-        # Format amount and date defensively
-        amount_display = f"${invoice_details.get('amount', 0)/100:.2f}" if isinstance(invoice_details.get('amount'), (int, float)) else "$0.00"
-        date_display = invoice_details.get('date', 'today')
-
-        html_content = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .alert {{ background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 20px; border-radius: 8px; margin: 20px 0; }}
-                .content {{ padding: 20px; }}
-                .button {{ background: #dc3545; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
-            </style>
-        </head>
-        <body>
-            <div class="alert">
-                <h2>⚠️ Payment Failed</h2>
-                <p>We couldn't process your payment for the {user_details.get('plan', 'Professional').title()} plan.</p>
-            </div>
-            
-            <div class="content">
-                <p>Hi {user_details.get('first_name', 'there')},</p>
-                
-                <p>Your payment of {amount_display} failed on {date_display}.</p>
-                
-                <p><strong>Possible reasons:</strong></p>
-                <ul>
-                    <li>Insufficient funds</li>
-                    <li>Expired credit card</li>
-                    <li>Bank declined the transaction</li>
-                    <li>Billing address mismatch</li>
-                </ul>
-                
-                <p>Please update your payment method to continue your service without interruption.</p>
-                
-                <a href="{billing_link}" class="button">Update Payment Method</a>
-                
-                <p>Your account will be suspended in 3 days if payment is not resolved.</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        plain_content = f"""
-        Payment Failed for {self.company_name} - Action Required!
-
-        Hi {user_details.get('first_name', 'there')},
-
-        Your payment of {amount_display} failed on {date_display}.
-
-        Please update your payment method to continue your service without interruption.
-        Update Payment Method: {billing_link}
-
-        Your account will be suspended in 3 days if payment is not resolved.
-        """
-
-        return self.send_email(
-            user_details['email'], subject, html_content, plain_content
-        )
-    
-    def send_subscription_cancelled_email(self, user_id: str) -> bool:
-        """Send subscription cancellation confirmation"""
-        user_details = self.security_core.get_user_details(user_id)
-        if not user_details or not user_details.get('email'):
-            self.logger.warning(f"Could not retrieve user details or email for user_id {user_id} to send cancellation email.")
-            return False
-        
-        subject = f"{self.company_name} Subscription Cancelled - We're Sorry to See You Go"
-        
-        # Use app_domain for all links
-        feedback_link = f"{self.app_domain}/feedback"
-
-        html_content = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .content {{ padding: 20px; }}
-                .button {{ background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
-            </style>
-        </head>
-        <body>
-            <div class="content">
-                <h2>Subscription Cancelled</h2>
-                
-                <p>Hi {user_details.get('first_name', 'there')},</p>
-                
-                <p>Your {self.company_name} subscription has been cancelled. You'll continue to have access until your current billing period ends.</p>
-                
-                <p>We'd love to hear your feedback about why you're leaving. Your input helps us improve our service.</p>
-                
-                <a href="{feedback_link}" class="button">Share Feedback</a>
-                
-                <p>You can reactivate your account anytime. Thank you for choosing {self.company_name}.</p>
-                
-                <p>Best regards,<br>The {self.company_name} Team</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        plain_content = f"""
-        {self.company_name} Subscription Cancelled
-
-        Hi {user_details.get('first_name', 'there')},
-
-        Your {self.company_name} subscription has been cancelled. You'll continue to have access until your current billing period ends.
-
-        We'd love to hear your feedback about why you're leaving. Your input helps us improve our service.
-        Share Feedback: {feedback_link}
-
-        You can reactivate your account anytime. Thank you for choosing {self.company_name}.
-
-        Best regards,
-        The {self.company_name} Team
-        """
-        
-        return self.send_email(
-            user_details['email'], subject, html_content, plain_content
-        )
-    
-    def send_security_alert_email(self, user_id: str, alert_details: Dict) -> bool:
-        """Send security alert notification"""
-        user_details = self.security_core.get_user_details(user_id)
-        if not user_details or not user_details.get('email'):
-            self.logger.warning(f"Could not retrieve user details or email for user_id {user_id} to send security alert.")
-            return False
-        
-        subject = f"🚨 Security Alert from {self.company_name}: {alert_details.get('type', 'Suspicious Activity')} Detected"
-        
-        # Use app_domain for all links
-        dashboard_link = f"{self.app_domain}/dashboard"
-
-        html_content = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .alert {{ background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 20px; border-radius: 8px; margin: 20px 0; }}
-                .content {{ padding: 20px; }}
-                .button {{ background: #dc3545; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }}
-            </style>
-        </head>
-        <body>
-            <div class="alert">
-                <h2>🚨 Security Alert</h2>
-                <p><strong>{alert_details.get('type', 'Suspicious Activity')}</strong> detected on your account.</p>
-            </div>
-            
-            <div class="content">
-                <p>Hi {user_details.get('first_name', 'there')},</p>
-                
-                <p><strong>Alert Details:</strong></p>
-                <ul>
-                    <li><strong>Type:</strong> {alert_details.get('type', 'Unknown')}</li>
-                    <li><strong>Time:</strong> {alert_details.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}</li>
-                    <li><strong>Severity:</strong> {alert_details.get('severity', 'Medium').upper()}</li>
-                    <li><strong>Description:</strong> {alert_details.get('description', 'Suspicious activity detected')}</li>
-                </ul>
-                
-                <p><strong>Recommended Actions:</strong></p>
-                <ul>
-                    <li>Review your recent account activity</li>
-                    <li>Check your API key usage logs</li>
-                    <li>Update your password if necessary</li>
-                    <li>Contact support if you need assistance</li>
-                </ul>
-                
-                <a href="{dashboard_link}" class="button">Review Security Dashboard</a>
-                
-                <p>If you didn't trigger this alert, please contact our security team immediately.</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        plain_content = f"""
-        Security Alert from {self.company_name}: {alert_details.get('type', 'Suspicious Activity')} Detected!
-
-        Hi {user_details.get('first_name', 'there')},
-
-        Alert Details:
-        Type: {alert_details.get('type', 'Unknown')}
-        Time: {alert_details.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}
-        Severity: {alert_details.get('severity', 'Medium').upper()}
-        Description: {alert_details.get('description', 'Suspicious activity detected')}
-
-        Recommended Actions:
-        - Review your recent account activity
-        - Check your API key usage logs
-        - Update your password if necessary
-        - Contact support if you need assistance
-
-        Review Security Dashboard: {dashboard_link}
-
-        If you didn't trigger this alert, please contact our security team immediately.
-        """
-        
-        return self.send_email(
-            user_details['email'], subject, html_content, plain_content
-        )
-    
-    def send_bulk_trial_reminders(self) -> Dict:
-        """
-        Send trial reminders to users approaching expiration.
-        This method now directly uses the imported Supabase client.
-        """
-        if not supabase:
-            self.logger.error("Supabase client not initialized. Cannot send bulk trial reminders.")
-            return {'error': "Supabase client not initialized."}
-
+    @log_api_call
+    def demote_to_user(self, user_id):
+        """Demotes an admin user to regular user role."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
         try:
-            # Query users from Supabase with trials ending soon
-            # Assumes 'users' table has 'is_trial' (boolean), 'trial_end_date' (timestamp)
-            # and 'email', 'first_name', 'id'
-            
-            # Fetch users who are currently on trial and whose trial ends within the next 7 days
-            seven_days_from_now = datetime.now() + timedelta(days=7)
-            
-            response = supabase.table("users").select("id, email, first_name, trial_end_date").eq("is_trial", True).lte("trial_end_date", seven_days_from_now.isoformat()).execute()
-            
-            if response.data is None:
-                self.logger.error(f"Supabase returned no data or an error for bulk trial reminders: {response.error}")
-                return {'error': response.error.message if response.error else "Unknown Supabase error"}
+            cursor.execute("""
+                UPDATE users SET role = 'user', updated_at = CURRENT_TIMESTAMP WHERE id = %s
+            """, (user_id,))
+            conn.commit()
+            logger.info(f"User {user_id} demoted to user.")
+        except Exception as e:
+            logger.error(f"Error demoting user {user_id} to user: {e}", exc_info=True)
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
-            users = response.data
-            
-            sent_count = 0
-            failed_count = 0
-            
-            self.logger.info(f"Found {len(users)} trial users ending within 7 days.")
+    def create_user(self, email, password, company, first_name, last_name, plan, phone="", job_title="", billing_period="monthly", email_token=None, email_verified=False, role='user', subscription_id=None):
+        """
+        Creates a new user in the database.
+        Includes initial trial setup and email verification status.
+        """
+        validated_email = self.validate_email_input(email)
+        if not validated_email:
+            return None, "Invalid email format"
+        
+        # Check if user already exists
+        if self.get_user_by_email(validated_email):
+            return None, "Email address already exists"
+        
+        company = self.sanitize_input(company, 255)
+        first_name = self.sanitize_input(first_name, 255)
+        last_name = self.sanitize_input(last_name, 255)
+        phone = self.sanitize_input(phone, 50)
+        job_title = self.sanitize_input(job_title, 255)
+        
+        allowed_plans = ['essentials', 'basic', 'professional', 'business', 'enterprise']
+        if plan not in allowed_plans:
+            return None, "Invalid plan selected"
 
-            for user_data in users:
-                user_id = user_data.get('id')
-                user_email = user_data.get('email')
-                trial_end_str = user_data.get('trial_end_date')
+        user_id = secrets.token_urlsafe(16)
+        password_hash = self.hash_password(password)
+        trial_start = datetime.now()
+        trial_end = trial_start + timedelta(days=30) # Default trial duration
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT INTO users (id, email, password_hash, company, first_name, last_name,
+                                    phone, job_title, plan, trial_start_date, trial_end_date,
+                                    is_trial, billing_period, auto_renewal, trial_ends,
+                                    email_token, email_verified, role, subscription_id, payment_status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (user_id, validated_email, password_hash, company, first_name, last_name,
+                  phone, job_title, plan, trial_start, trial_end, True, billing_period, True, trial_end,
+                  email_token, email_verified, role, subscription_id, 'trial' if email_verified else 'unverified'))
+            conn.commit()
+            logger.info(f"User {user_id} created successfully.")
+            return user_id, "User created successfully"
+        except psycopg2.IntegrityError as e:
+            logger.error(f"Database integrity error in create_user: {e}", exc_info=True)
+            conn.rollback()
+            return None, "Failed to create user account due to data conflict (e.g., email already exists)."
+        except Exception as e:
+            logger.error(f"Database error in create_user: {e}", exc_info=True)
+            conn.rollback()
+            return None, f"Database error: {str(e)}"
+        finally:
+            conn.close()
 
-                if not user_id or not user_email or not trial_end_str:
-                    self.logger.warning(f"Skipping user due to missing data: {user_data}")
-                    failed_count += 1
-                    continue
+    def get_user_by_email(self, email):
+        """Retrieves full user details by email."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, email, password_hash, company, first_name, last_name, phone, job_title,
+                   plan, role, status, trial_ends, payment_status, email_token, email_verified,
+                   is_trial, subscription_id, trial_start_date
+            FROM users WHERE email = %s
+        ''', (email,))
+        result = cursor.fetchone()
+        conn.close()
 
-                try:
-                    trial_end = datetime.fromisoformat(trial_end_str.replace('Z', '+00:00')) # Handle 'Z' for UTC
-                except ValueError:
-                    self.logger.error(f"Invalid trial_end_date format for user {user_id}: {trial_end_str}")
-                    failed_count += 1
-                    continue
-
-                days_remaining = (trial_end - datetime.now()).days
-                
-                # Only send if days_remaining is exactly 7, 3, or 1
-                if days_remaining in [7, 3, 1]:
-                    # To avoid re-fetching user_details in send_trial_reminder,
-                    # we can pass them directly if that method were modified to accept them.
-                    # For now, it still calls security_core.get_user_details internally.
-                    success = self.send_trial_reminder(user_id, days_remaining)
-                    if success:
-                        sent_count += 1
-                    else:
-                        failed_count += 1
-                else:
-                    self.logger.info(f"User {user_id} has {days_remaining} days remaining, not a target reminder day (7, 3, or 1).")
-                            
+        if result:
             return {
-                'sent': sent_count,
-                'failed': failed_count,
-                'total_users_considered': len(users)
+                'id': result[0], 'email': result[1], 'password_hash': result[2],
+                'company': result[3], 'first_name': result[4], 'last_name': result[5],
+                'phone': result[6], 'job_title': result[7], 'plan': result[8],
+                'role': result[9], 'status': result[10], 'trial_ends': result[11],
+                'payment_status': result[12], 'email_token': result[13],
+                'email_verified': result[14], 'is_trial': result[15],
+                'subscription_id': result[16], 'trial_start_date': result[17]
             }
-            
+        return None
+
+    def get_user_details(self, user_id):
+        """Retrieves select user details by ID."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT email, company, first_name, last_name, phone, job_title,
+                   plan, role, status, trial_ends, payment_status, email_verified,
+                   is_trial, subscription_id, trial_start_date
+            FROM users WHERE id = %s
+        ''', (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            return {
+                'email': result[0], 'company': result[1], 'first_name': result[2],
+                'last_name': result[3], 'phone': result[4], 'job_title': result[5],
+                'plan': result[6], 'role': result[7], 'status': result[8],
+                'trial_ends': result[9], 'payment_status': result[10],
+                'email_verified': result[11], 'is_trial': result[12],
+                'subscription_id': result[13], 'trial_start_date': result[14]
+            }
+        return None
+
+    def get_user_id_by_email(self, email):
+        """Retrieves user ID by email."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+
+    def get_user_id_by_subscription_id(self, subscription_id):
+        """Retrieves user ID by Stripe subscription ID."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE subscription_id = %s", (subscription_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+
+    def verify_user_email(self, user_id):
+        """Marks a user's email as verified."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                UPDATE users SET email_verified = TRUE, email_token = NULL, payment_status = 'trial', updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            ''', (user_id,))
+            conn.commit()
+            logger.info(f"Email verified for user {user_id}.")
+            return True
         except Exception as e:
-            self.logger.error(f"Bulk reminder sending failed: {str(e)}", exc_info=True)
-            return {'error': str(e)}
+            logger.error(f"Error verifying user email {user_id}: {e}", exc_info=True)
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
 
+    def authenticate_user(self, email, password):
+        """Authenticates a user by email and password."""
+        user = self.get_user_by_email(email)
+        if user and self.verify_password(password, user['password_hash']):
+            if not user['email_verified']:
+                return None, "Email not verified. Please check your inbox for the verification link."
 
-class EmailEventHandler:
-    """Handle email automation based on system events"""
-    
-    def __init__(self, email_automation: EmailAutomation):
-        self.email_automation = email_automation
-    
-    def handle_user_created(self, user_id: str):
-        """Handle new user creation"""
-        user_details = self.email_automation.security_core.get_user_details(user_id)
-        if user_details:
-            self.email_automation.send_welcome_email(user_id, user_details)
-        else:
-            self.email_automation.logger.error(f"User details not found for {user_id} during user creation event.")
-    
-    def handle_payment_failed(self, user_id: str, invoice_details: Dict):
-        """Handle failed payment"""
-        self.email_automation.send_payment_failed_email(user_id, invoice_details)
-    
-    def handle_subscription_cancelled(self, user_id: str):
-        """Handle subscription cancellation"""
-        self.email_automation.send_subscription_cancelled_email(user_id)
-    
-    def handle_security_alert(self, user_id: str, alert_details: Dict):
-        """Handle security alerts"""
-        # Ensure 'severity' key exists and is a string for case-insensitive comparison
-        severity = alert_details.get('severity', '').lower()
-        if severity in ['high', 'critical']:
-            self.email_automation.send_security_alert_email(user_id, alert_details)
-        else:
-            self.email_automation.logger.info(f"Skipping security alert for user {user_id} due to low severity: {severity}")
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute('UPDATE users SET last_login = %s WHERE id = %s', (datetime.now(), user['id']))
+                conn.commit()
+                logger.info(f"User {user['id']} authenticated successfully.")
+            except Exception as e:
+                logger.error(f"Error updating last login for user {user['id']}: {e}", exc_info=True)
+                conn.rollback()
+            finally:
+                conn.close()
+            
+            return {'id': user['id'], 'role': user['role'], 'status': user['status']}, None
+        return None, "Invalid email or password."
 
-# --- Example Usage (for testing purposes) ---
-if __name__ == '__main__':
-    # Set dummy environment variables for local testing (remove in production or use .env)
-    os.environ['SENDGRID_API_KEY'] = 'SG.YOUR_SENDGRID_API_KEY' # Replace with a real test key
-    os.environ['FROM_EMAIL'] = 'test@example.com'
-    os.environ['DOMAIN'] = 'http://localhost:8501' # Your local Streamlit domain
+    def update_user_subscription_status(self, user_id, payment_status, is_trial=None, subscription_id=None, trial_ends=None):
+        """
+        Updates a user's payment and trial status based on webhook events.
+        'trial_ends' will store the next billing date for paying customers.
+        """
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            update_sql = "UPDATE users SET payment_status = %s, updated_at = CURRENT_TIMESTAMP"
+            params = [payment_status]
 
-    # Supabase dummy credentials - REPLACE WITH YOUR ACTUAL ONES FOR REAL TESTING
-    os.environ['SUPABASE_URL'] = 'https://your-project-ref.supabase.co'
-    os.environ['SUPABASE_KEY'] = 'your-anon-public-key'
-    os.environ['SUPABASE_SERVICE_ROLE_KEY'] = 'your-service-role-key' # If you need admin client for testing
+            if is_trial is not None:
+                update_sql += ", is_trial = %s"
+                params.append(is_trial)
+            
+            update_sql += ", subscription_id = %s"
+            params.append(subscription_id)
+            
+            if trial_ends is not None:
+                update_sql += ", trial_ends = %s"
+                params.append(trial_ends)
 
-    # Re-import supabase client after setting env vars for __main__ block
-    # In a real app, env vars would be set before the app starts and clients are initialized.
-    from src.config.supabase_client import supabase, supabase_admin
+            update_sql += " WHERE id = %s"
+            params.append(user_id)
 
-    # Initialize mock security core
-    mock_security_core = MockSecurityCore()
-    
-    # Initialize email automation system
-    email_automation = EmailAutomation(mock_security_core)
-    
-    # Initialize event handler
-    event_handler = EmailEventHandler(email_automation)
+            cursor.execute(update_sql, tuple(params))
+            conn.commit()
+            logger.info(f"User {user_id} subscription status updated to {payment_status}. is_trial: {is_trial}, sub_id: {subscription_id}")
+        except Exception as e:
+            logger.error(f"Error updating user {user_id} subscription status: {e}", exc_info=True)
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
-    # --- Test Cases ---
+    def get_trial_discount_eligibility(self, user_id):
+        """Checks if a user is eligible for a trial conversion discount."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT trial_start_date, is_trial FROM users WHERE id = %s', (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        if not result or not result[1]:
+            return False
+        trial_start = result[0]
+        days_since_trial = (datetime.now() - trial_start).days
+        return days_since_trial <= 15
 
-    # Mock user details for testing purposes
-    test_user_id = "test_user_123"
-    test_user_details = {
-        "id": test_user_id,
-        "email": "dustin.myers.test@example.com",
-        "first_name": "Dustin",
-        "plan": "Enterprise",
-        "trial_token": "some_unique_trial_token_123",
-        "plan_price": 99,
-        "is_trial": True,
-        "trial_end_date": (datetime.now() + timedelta(days=5)).isoformat() + 'Z' # Example: Trial ends in 5 days
-    }
+    def calculate_discounted_price(self, base_price, plan_name, billing_period="monthly", user_id=None):
+        """Calculates pricing with potential discounts."""
+        discounts = []
+        final_monthly_base = base_price
 
-    # You'd need to mock or ensure these users exist in your Supabase 'users' table
-    # for the `security_core.get_user_details` and `send_bulk_trial_reminders` to work.
-    # For a real test, insert them into your test Supabase DB first.
+        if True:
+            final_monthly_base -= 10
+            discounts.append("$10 auto-renewal savings")
 
-    print("\n--- Testing Welcome Email ---")
-    # Simulate a user creation event
-    # If using MockSecurityCore, ensure test_user_details reflects what get_user_details would return
-    # For this test, we'll pass user_details directly as if 'handle_user_created' had already fetched it.
-    success_welcome = email_automation.send_welcome_email(test_user_id, test_user_details)
-    print(f"Welcome email sent: {success_welcome}")
+        monthly_price = final_monthly_base
 
-    print("\n--- Testing Trial Reminder (7 days) ---")
-    # Simulate a trial reminder for a user with 7 days left
-    user_7_days = {"id": "user_7d", "email": "seven.days@example.com", "first_name": "Seven", "plan_price": 49, "is_trial": True, "trial_end_date": (datetime.now() + timedelta(days=7)).isoformat() + 'Z'}
-    # Mock SecurityCore to return this specific user
-    # In a real app, this user would be in your DB
-    mock_security_core.get_user_details = lambda u_id: user_7_days if u_id == "user_7d" else None
-    success_reminder_7 = email_automation.send_trial_reminder("user_7d", 7)
-    print(f"Trial reminder (7 days) sent: {success_reminder_7}")
+        yearly_price = None
+        total_savings = 0
 
-    print("\n--- Testing Payment Failed Email ---")
-    # Simulate a payment failure event
-    invoice_details = {"amount": 5999, "date": "2025-06-10"}
-    user_payment_fail = {"id": "user_pf", "email": "payment.fail@example.com", "first_name": "Failed", "plan": "Professional"}
-    mock_security_core.get_user_details = lambda u_id: user_payment_fail if u_id == "user_pf" else None
-    success_payment_fail = email_automation.send_payment_failed_email("user_pf", invoice_details)
-    print(f"Payment failed email sent: {success_payment_fail}")
+        if billing_period == "yearly":
+            yearly_price = final_monthly_base * 10
+            yearly_savings_amount = (base_price * 12) - yearly_price
+            discounts.append(f"2 months FREE (save ${yearly_savings_amount:.0f}/year)")
+            total_savings += yearly_savings_amount
 
-    print("\n--- Testing Subscription Cancelled Email ---")
-    user_cancelled = {"id": "user_cancel", "email": "cancel@example.com", "first_name": "Canceled"}
-    mock_security_core.get_user_details = lambda u_id: user_cancelled if u_id == "user_cancel" else None
-    success_cancelled = email_automation.send_subscription_cancelled_email("user_cancel")
-    print(f"Subscription cancelled email sent: {success_cancelled}")
+            if user_id and self.get_trial_discount_eligibility(user_id):
+                trial_discount_amount = yearly_price * 0.25
+                yearly_price -= trial_discount_amount
+                discounts.append(f"25% trial conversion discount (save ${trial_discount_amount:.0f})")
+                total_savings += trial_discount_amount
 
-    print("\n--- Testing Security Alert Email (High Severity) ---")
-    alert_details_high = {
-        "type": "Unauthorized API Access",
-        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "severity": "high",
-        "description": "Multiple failed login attempts from unusual IP address."
-    }
-    user_security_alert = {"id": "user_sec", "email": "security.alert@example.com", "first_name": "Secure"}
-    mock_security_core.get_user_details = lambda u_id: user_security_alert if u_id == "user_sec" else None
-    success_security_alert = email_automation.send_security_alert_email("user_sec", alert_details_high)
-    print(f"Security alert email sent: {success_security_alert}")
+            return {
+                'monthly_price': final_monthly_base,
+                'yearly_price': yearly_price,
+                'total_savings': total_savings,
+                'discounts': discounts
+            }
 
-    print("\n--- Testing Bulk Trial Reminders (Requires real Supabase data or extensive mocking) ---")
-    # For a real test, ensure your Supabase 'users' table has trial users setup:
-    # Example:
-    # INSERT INTO users (id, email, first_name, is_trial, trial_end_date) VALUES
-    # ('user_bulk_1', 'bulk1@example.com', 'TestUser1', TRUE, NOW() + INTERVAL '7 days'),
-    # ('user_bulk_2', 'bulk2@example.com', 'TestUser2', TRUE, NOW() + INTERVAL '3 days'),
-    # ('user_bulk_3', 'bulk3@example.com', 'TestUser3', TRUE, NOW() + INTERVAL '1 day'),
-    # ('user_bulk_4', 'bulk4@example.com', 'TestUser4', TRUE, NOW() + INTERVAL '10 days');
-    
-    # Temporarily set mock_security_core.get_user_details to return the user from bulk query
-    original_get_user_details = mock_security_core.get_user_details
-    def bulk_mock_get_user_details(user_id):
-        # This simulates fetching the full details for send_trial_reminder if needed
-        # In real code, your get_user_details would fetch from DB
-        if user_id == 'user_bulk_1': return {'id': 'user_bulk_1', 'email': 'bulk1@example.com', 'first_name': 'TestUser1', 'plan_price': 39, 'is_trial': True, 'trial_end_date': (datetime.now() + timedelta(days=7)).isoformat() + 'Z'}
-        if user_id == 'user_bulk_2': return {'id': 'user_bulk_2', 'email': 'bulk2@example.com', 'first_name': 'TestUser2', 'plan_price': 39, 'is_trial': True, 'trial_end_date': (datetime.now() + timedelta(days=3)).isoformat() + 'Z'}
-        if user_id == 'user_bulk_3': return {'id': 'user_bulk_3', 'email': 'bulk3@example.com', 'first_name': 'TestUser3', 'plan_price': 39, 'is_trial': True, 'trial_end_date': (datetime.now() + timedelta(days=1)).isoformat() + 'Z'}
-        return original_get_user_details(user_id) # Fallback to original mock
-    mock_security_core.get_user_details = bulk_mock_get_user_details
+        if user_id and self.get_trial_discount_eligibility(user_id):
+            trial_savings_monthly = monthly_price * 0.25 * 3
+            discounts.append(f"25% off first 3 months (save ${trial_savings_monthly:.0f})")
+            total_savings += trial_savings_monthly
 
-    # This call now queries Supabase directly
-    bulk_results = email_automation.send_bulk_trial_reminders()
-    print(f"Bulk trial reminders results: {bulk_results}")
+        return {
+            'monthly_price': monthly_price,
+            'yearly_price': None,
+            'total_savings': total_savings,
+            'discounts': discounts
+        }
+
+    def add_api_key(self, user_id, name, api_key, service, permissions="read"):
+        """Adds an encrypted API key for a user."""
+        key_id = secrets.token_urlsafe(16)
+        encrypted_key = self.encrypt_api_key(api_key)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT INTO api_keys (id, user_id, name, encrypted_key, service, permissions)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (key_id, user_id, name, encrypted_key, service, permissions))
+            conn.commit()
+            self.log_security_event(user_id, "api_key_created", "info", f"API key '{name}' created for service '{service}'")
+            logger.info(f"API key '{name}' added for user {user_id}.")
+            return key_id
+        except Exception as e:
+            logger.error(f"Error adding API key for user {user_id}: {e}", exc_info=True)
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_user_api_keys(self, user_id):
+        """Retrieves and decrypts API keys for a user."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, name, encrypted_key, service, permissions, created_at FROM api_keys WHERE user_id = %s', (user_id,))
+        keys = cursor.fetchall()
+        conn.close()
+        return [
+            {
+                'id': row[0],
+                'name': row[1],
+                'key': self.decrypt_api_key(row[2]),
+                'service': row[3],
+                'permissions': row[4],
+                'created_at': row[5],
+                'last_used': None,
+                'status': 'active'
+            }
+            for row in keys
+        ]
+
+    def sanitize_input(self, val, maxlen):
+        """Basic input sanitization."""
+        if val is None:
+            return ""
+        return str(val)[:maxlen]
+
+    def log_security_event(self, user_id, event_type, severity, description, source_ip=None, metadata=None, resolved=False):
+        """Logs a security event to the database."""
+        event_id = secrets.token_urlsafe(16)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT INTO security_events
+                    (id, user_id, event_type, severity, description, source_ip, metadata, resolved)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (event_id, user_id, event_type, severity, description, source_ip, json.dumps(metadata) if metadata else None, resolved))
+            conn.commit()
+            logger.info(f"Security event '{event_type}' logged for user {user_id}.")
+            return event_id
+        except Exception as e:
+            logger.error(f"Error logging security event for user {user_id}: {e}", exc_info=True)
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def populate_mock_threat_intelligence(self, num_entries=100):
+        """Populates mock threat intelligence data for demonstration."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM threat_intelligence WHERE source = 'Mock Data';")
+            conn.commit()
+            
+            threat_types = ["Malware", "Phishing", "DDoS", "SQL Injection", "XSS", "Brute Force"]
+            sources = ["ThreatFeed-A", "OSINT", "Internal IPS", "DarkWeb-Scraper", "Mock Data"]
+            indicators_base = ["192.168.", "10.0.", "example.com/", "malicious.biz/", "c2server.ru/", "phish."]
+
+            for i in range(num_entries):
+                threat_type = random.choice(threat_types)
+                source = random.choice(sources)
+                confidence = random.randint(30, 100)
+                
+                if threat_type == "Malware":
+                    indicator = f"{random.choice(indicators_base)}{random.randint(0, 255)}.{random.randint(0, 255)}"
+                elif threat_type == "Phishing":
+                    indicator = f"{random.choice(indicators_base)}{secrets.token_hex(4)}.html"
+                elif threat_type == "DDoS":
+                     indicator = f"{random.choice(indicators_base)}{random.randint(0, 255)}.{random.randint(0, 255)}"
+                elif threat_type == "SQL Injection" or threat_type == "XSS":
+                    indicator = f"WebApp-Param-{secrets.token_hex(3)}"
+                else: # Brute Force
+                    indicator = f"Login-Attempt-{random.randint(1000, 9999)}"
+
+                days_ago = random.randint(0, 30)
+                timestamp = datetime.now() - timedelta(days=days_ago, hours=random.randint(0,23), minutes=random.randint(0,59))
+
+                cursor.execute('''
+                    INSERT INTO threat_intelligence
+                        (timestamp, indicator, threat_type, confidence, source, status)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                ''', (timestamp, indicator, threat_type, confidence, source, 'active'))
+            conn.commit()
+            logger.info(f"Populated {num_entries} mock threat intelligence entries.")
+        except Exception as e:
+            logger.error(f"Error populating mock threat intelligence: {e}", exc_info=True)
+            conn.rollback()
+        finally:
+            conn.close()
+
+    # --- Idempotency Methods for Webhooks ---
+    def is_event_already_processed(self, event_id):
+        """Checks if a Stripe event has already been processed using the database."""
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM processed_webhook_events WHERE event_id = %s", (event_id,))
+            return cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Error checking event idempotency for {event_id}: {e}", exc_info=True)
+            return False 
+        finally:
+            if conn:
+                conn.close()
+
+    def mark_event_as_processed(self, event_id, event_type=None):
+        """Marks a Stripe event as processed in the database."""
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO processed_webhook_events (event_id, event_type) VALUES (%s, %s)",
+                (event_id, event_type)
+            )
+            conn.commit()
+            logger.info(f"Event {event_id} marked as processed.")
+        except Exception as e:
+            logger.error(f"Error marking event {event_id} as processed: {e}", exc_info=True)
+            conn.rollback()
+        finally:
+            if conn:
+                conn.close()
