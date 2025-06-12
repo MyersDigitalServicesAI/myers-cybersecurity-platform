@@ -1,37 +1,23 @@
+# utils/database.py
 import os
-from dotenv import load_dotenv # Only needed for local development
-from supabase import create_client, Client
+import psycopg2
+import logging
+from dotenv import load_dotenv
 
-# For local development: Load environment variables from .env file
-# In production (e.g., on Render), these variables will already be available
-load_dotenv()
+load_dotenv() # Ensure env vars are loaded for this utility too
 
-# Get Supabase credentials from environment variables
-supabase_url: str = os.getenv("SUPABASE_URL")
-supabase_key: str = os.getenv("SUPABASE_KEY")
+logger = logging.getLogger(__name__)
 
-# Create the Supabase client
-# Ensure that these environment variables are set before this line is executed.
-if not supabase_url or not supabase_key:
-    raise ValueError("Supabase URL and Key must be set in environment variables.")
-
-supabase: Client = create_client(supabase_url, supabase_key)
-
-# Example usage (you would use this in your application logic):
-# from your_module import supabase
-#
-# # Fetch data
-# response = supabase.table("your_table_name").select("*").execute()
-# data = response.data
-# error = response.error
-#
-# if error:
-#     print(f"Error fetching data: {error}")
-# else:
-#     print(f"Data: {data}")
-
-# If you need the service role key for admin-level operations (e.g., bypassing RLS in a backend script):
-# supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-# if supabase_service_role_key:
-#     supabase_admin: Client = create_client(supabase_url, supabase_service_role_key)
-#     # Use supabase_admin for operations that require higher privileges
+def get_db_connection():
+    """Establishes and returns a new database connection."""
+    database_url = os.getenv('DATABASE_URL')
+    if not database_url:
+        logger.critical("DATABASE_URL environment variable not set in utils/database.py. Exiting.")
+        raise ValueError("DATABASE_URL environment variable is required for database connection.")
+    try:
+        conn = psycopg2.connect(database_url)
+        logger.debug("Database connection established.")
+        return conn
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {e}", exc_info=True)
+        raise
