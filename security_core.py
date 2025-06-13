@@ -12,6 +12,8 @@ import random
 from dotenv import load_dotenv
 import psycopg2
 from typing import Dict, Any, Optional, Tuple, List, Union
+import jwt
+from datetime import datetime, timedelta
 
 # Import get_db_connection, return_db_connection, and close_db_pool from the utils
 from utils.database import get_db_connection, return_db_connection, close_db_pool
@@ -47,6 +49,27 @@ def log_api_call(func):
     return wrapper
 
 class SecurityCore:
+    def __init__(self):
+        self.SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret")  # Load from env
+        self.ALGORITHM = "HS256"
+        self.TOKEN_EXPIRE_MINUTES = 60
+
+    def create_access_token(self, data: dict):
+        to_encode = data.copy()
+        expire = datetime.utcnow() + timedelta(minutes=self.TOKEN_EXPIRE_MINUTES)
+        to_encode.update({"exp": expire})
+        encoded_jwt = jwt.encode(to_encode, self.SECRET_KEY, algorithm=self.ALGORITHM)
+        return encoded_jwt
+
+    def verify_access_token(self, token: str):
+        try:
+            payload = jwt.decode(token, self.SECRET_KEY, algorithms=[self.ALGORITHM])
+            return payload.get("id") or payload.get("sub")  # Either works
+        except jwt.ExpiredSignatureError:
+            return None
+        except jwt.PyJWTError:
+            return None
+            
     def __init__(self):
         self.encryption_key = self.get_or_create_encryption_key()
         self.init_database()
