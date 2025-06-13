@@ -1,3 +1,4 @@
+# security_core_pg.py
 import os
 import secrets
 import json
@@ -12,7 +13,8 @@ import random
 from dotenv import load_dotenv
 import psycopg2 
 
-from utils.database import get_db_connection 
+# Import get_db_connection and return_db_connection from the utils
+from utils.database import get_db_connection, return_db_connection 
 
 load_dotenv()
 
@@ -196,10 +198,12 @@ class SecurityCore:
             logger.info("Database initialization/migration complete.")
         except Exception as e:
             logger.critical(f"Database initialization failed: {e}", exc_info=True)
+            if conn: # Ensure rollback on error
+                conn.rollback()
             raise
         finally:
             if conn:
-                conn.close()
+                return_db_connection(conn) # Use return_db_connection
 
     def get_or_create_encryption_key(self):
         """Retrieves or generates the encryption key for API keys."""
@@ -266,10 +270,10 @@ class SecurityCore:
 
     @log_api_call
     def promote_to_admin(self, user_id):
-        """Promotes a user to admin role."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute("""
                 UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE id = %s
             """, (user_id,))
@@ -281,17 +285,19 @@ class SecurityCore:
             return True
         except Exception as e:
             logger.error(f"Error promoting user {user_id} to admin: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     @log_api_call
     def demote_to_user(self, user_id):
-        """Demotes an admin user to regular user role."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute("""
                 UPDATE users SET role = 'user', updated_at = CURRENT_TIMESTAMP WHERE id = %s
             """, (user_id,))
@@ -303,17 +309,20 @@ class SecurityCore:
             return True
         except Exception as e:
             logger.error(f"Error demoting user {user_id} to user: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     @log_api_call
     def deactivate_user_account(self, user_id):
         """Deactivates a user account (soft-deletion)."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute("""
                 UPDATE users SET status = 'inactive', updated_at = CURRENT_TIMESTAMP WHERE id = %s
             """, (user_id,))
@@ -326,10 +335,12 @@ class SecurityCore:
             return True
         except Exception as e:
             logger.error(f"Error deactivating user account {user_id}: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     def create_user(self, email, password, company, first_name, last_name, plan, phone="", job_title="", billing_period="monthly", email_token=None, email_verified=False, role='user', subscription_id=None, auto_renewal=True):
         """
@@ -360,9 +371,10 @@ class SecurityCore:
         trial_start = datetime.now()
         trial_end = trial_start + timedelta(days=DEFAULT_TRIAL_DAYS) # Use configurable trial duration
         
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO users (id, email, password_hash, company, first_name, last_name,
                                  phone, job_title, plan, trial_start_date, trial_end_date,
@@ -377,90 +389,122 @@ class SecurityCore:
             return user_id, "User created successfully"
         except psycopg2.IntegrityError as e:
             logger.error(f"Database integrity error in create_user: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             if "users_email_key" in str(e): # Specific check for email unique constraint
                  return None, "Email address already exists."
             return None, "Failed to create user account due to data conflict (e.g., email already exists)."
         except Exception as e:
             logger.error(f"Database error in create_user: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             return None, f"Database error: {str(e)}"
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     def get_user_by_email(self, email):
         """Retrieves full user details by email."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, email, password_hash, company, first_name, last_name, phone, job_title,
-                   plan, role, status, trial_ends, payment_status, email_token, email_verified,
-                   is_trial, subscription_id, trial_start_date, auto_renewal
-            FROM users WHERE email = %s
-        ''', (email,))
-        result = cursor.fetchone()
-        conn.close()
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, email, password_hash, company, first_name, last_name, phone, job_title,
+                       plan, role, status, trial_ends, payment_status, email_token, email_verified,
+                       is_trial, subscription_id, trial_start_date, auto_renewal
+                FROM users WHERE email = %s
+            ''', (email,))
+            result = cursor.fetchone()
 
-        if result:
-            return {
-                'id': result[0], 'email': result[1], 'password_hash': result[2],
-                'company': result[3], 'first_name': result[4], 'last_name': result[5],
-                'phone': result[6], 'job_title': result[7], 'plan': result[8],
-                'role': result[9], 'status': result[10], 'trial_ends': result[11],
-                'payment_status': result[12], 'email_token': result[13],
-                'email_verified': result[14], 'is_trial': result[15],
-                'subscription_id': result[16], 'trial_start_date': result[17],
-                'auto_renewal': result[18] # Added auto_renewal
-            }
-        return None
+            if result:
+                return {
+                    'id': result[0], 'email': result[1], 'password_hash': result[2],
+                    'company': result[3], 'first_name': result[4], 'last_name': result[5],
+                    'phone': result[6], 'job_title': result[7], 'plan': result[8],
+                    'role': result[9], 'status': result[10], 'trial_ends': result[11],
+                    'payment_status': result[12], 'email_token': result[13],
+                    'email_verified': result[14], 'is_trial': result[15],
+                    'subscription_id': result[16], 'trial_start_date': result[17],
+                    'auto_renewal': result[18]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving user by email: {e}", exc_info=True)
+            raise
+        finally:
+            if conn:
+                return_db_connection(conn)
 
     def get_user_details(self, user_id):
         """Retrieves select user details by ID."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT email, company, first_name, last_name, phone, job_title,
-                   plan, role, status, trial_ends, payment_status, email_verified,
-                   is_trial, subscription_id, trial_start_date, auto_renewal
-            FROM users WHERE id = %s
-        ''', (user_id,))
-        result = cursor.fetchone()
-        conn.close()
-        if result:
-            return {
-                'email': result[0], 'company': result[1], 'first_name': result[2],
-                'last_name': result[3], 'phone': result[4], 'job_title': result[5],
-                'plan': result[6], 'role': result[7], 'status': result[8],
-                'trial_ends': result[9], 'payment_status': result[10],
-                'email_verified': result[11], 'is_trial': result[12],
-                'subscription_id': result[13], 'trial_start_date': result[14],
-                'auto_renewal': result[15] # Added auto_renewal
-            }
-        return None
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT email, company, first_name, last_name, phone, job_title,
+                       plan, role, status, trial_ends, payment_status, email_verified,
+                       is_trial, subscription_id, trial_start_date, auto_renewal
+                FROM users WHERE id = %s
+            ''', (user_id,))
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'email': result[0], 'company': result[1], 'first_name': result[2],
+                    'last_name': result[3], 'phone': result[4], 'job_title': result[5],
+                    'plan': result[6], 'role': result[7], 'status': result[8],
+                    'trial_ends': result[9], 'payment_status': result[10],
+                    'email_verified': result[11], 'is_trial': result[12],
+                    'subscription_id': result[13], 'trial_start_date': result[14],
+                    'auto_renewal': result[15]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving user details for {user_id}: {e}", exc_info=True)
+            raise
+        finally:
+            if conn:
+                return_db_connection(conn)
 
     def get_user_id_by_email(self, email):
         """Retrieves user ID by email."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else None
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+            result = cursor.fetchone()
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"Error retrieving user ID by email {email}: {e}", exc_info=True)
+            raise
+        finally:
+            if conn:
+                return_db_connection(conn)
 
     def get_user_id_by_subscription_id(self, subscription_id):
         """Retrieves user ID by Stripe subscription ID."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM users WHERE subscription_id = %s", (subscription_id,))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else None
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM users WHERE subscription_id = %s", (subscription_id,))
+            result = cursor.fetchone()
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"Error retrieving user ID by subscription ID {subscription_id}: {e}", exc_info=True)
+            raise
+        finally:
+            if conn:
+                return_db_connection(conn)
 
     def verify_user_email(self, user_id):
         """Marks a user's email as verified."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute('''
                 UPDATE users SET email_verified = TRUE, email_token = NULL, payment_status = 'trial', updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
@@ -473,14 +517,16 @@ class SecurityCore:
             return True
         except Exception as e:
             logger.error(f"Error verifying user email {user_id}: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             return False
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     def authenticate_user(self, email, password):
         """Authenticates a user by email and password."""
-        user = self.get_user_by_email(email)
+        user = self.get_user_by_email(email) # This already handles its own connection
         if user and self.verify_password(password, user['password_hash']):
             if not user['email_verified']:
                 return None, "Email not verified. Please check your inbox for the verification link."
@@ -488,17 +534,20 @@ class SecurityCore:
             if user['status'] == 'inactive':
                 return None, "Your account is inactive. Please contact support."
 
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            conn = None
             try:
+                conn = get_db_connection()
+                cursor = conn.cursor()
                 cursor.execute('UPDATE users SET last_login = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s', (datetime.now(), user['id']))
                 conn.commit()
                 logger.info(f"User {user['id']} authenticated successfully.")
             except Exception as e:
                 logger.error(f"Error updating last login for user {user['id']}: {e}", exc_info=True)
-                conn.rollback()
+                if conn:
+                    conn.rollback()
             finally:
-                conn.close()
+                if conn:
+                    return_db_connection(conn)
             
             return {'id': user['id'], 'role': user['role'], 'status': user['status']}, None
         return None, "Invalid email or password."
@@ -508,9 +557,10 @@ class SecurityCore:
         Updates a user's payment and trial status based on webhook events.
         'trial_ends' will store the next billing date for paying customers.
         """
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             update_fields = []
             params = []
 
@@ -521,6 +571,7 @@ class SecurityCore:
                 update_fields.append("is_trial = %s")
                 params.append(is_trial)
             
+            # subscription_id should always be updated, even to NULL if a subscription is cancelled
             update_fields.append("subscription_id = %s")
             params.append(subscription_id)
             
@@ -546,23 +597,32 @@ class SecurityCore:
             return True
         except Exception as e:
             logger.error(f"Error updating user {user_id} subscription status: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     def get_trial_discount_eligibility(self, user_id):
         """Checks if a user is eligible for a trial conversion discount."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT trial_start_date, is_trial FROM users WHERE id = %s', (user_id,))
-        result = cursor.fetchone()
-        conn.close()
-        if not result or not result[1]: # Not found or not currently on trial
-            return False
-        trial_start = result[0]
-        days_since_trial = (datetime.now() - trial_start).days
-        return days_since_trial <= 15 # Eligibility within first 15 days of trial
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT trial_start_date, is_trial FROM users WHERE id = %s', (user_id,))
+            result = cursor.fetchone()
+            if not result or not result[1]: # Not found or not currently on trial
+                return False
+            trial_start = result[0]
+            days_since_trial = (datetime.now() - trial_start).days
+            return days_since_trial <= 15 # Eligibility within first 15 days of trial
+        except Exception as e:
+            logger.error(f"Error checking trial discount eligibility for user {user_id}: {e}", exc_info=True)
+            raise
+        finally:
+            if conn:
+                return_db_connection(conn)
 
     def calculate_discounted_price(self, base_price, plan_name, billing_period="monthly", user_id=None):
         """Calculates pricing with potential discounts."""
@@ -574,7 +634,8 @@ class SecurityCore:
             user_info = self.get_user_details(user_id) # Fetch user info to check auto_renewal
 
         # Auto-renewal discount conditional on user's auto_renewal setting
-        if user_info and user_info.get('auto_renewal', False): # Assuming auto_renewal is a boolean field
+        # This implies a $10 discount on the base monthly price if auto-renewal is true.
+        if user_info and user_info.get('auto_renewal', False): 
             final_monthly_base -= 10
             discounts.append("$10 auto-renewal savings")
 
@@ -584,13 +645,14 @@ class SecurityCore:
         total_savings = 0
 
         if billing_period == "yearly":
-            yearly_price = final_monthly_base * 10 # Example: 2 months free for yearly
-            yearly_savings_amount = (base_price * 12) - yearly_price
+            # Example: Yearly price is 10 months of the (potentially auto-renewal discounted) monthly price
+            yearly_price = final_monthly_base * 10
+            yearly_savings_amount = (base_price * 12) - yearly_price # Calculate savings based on original base price
             discounts.append(f"2 months FREE (save ${yearly_savings_amount:.0f}/year)")
             total_savings += yearly_savings_amount
 
             if user_id and self.get_trial_discount_eligibility(user_id):
-                trial_discount_amount = yearly_price * 0.25
+                trial_discount_amount = yearly_price * 0.25 # 25% off yearly price
                 yearly_price -= trial_discount_amount
                 discounts.append(f"25% trial conversion discount (save ${trial_discount_amount:.0f})")
                 total_savings += trial_discount_amount
@@ -604,15 +666,15 @@ class SecurityCore:
 
         # Monthly billing period specific discounts
         if user_id and self.get_trial_discount_eligibility(user_id):
-            # Apply 25% off for the first 3 months
-            # This calculation assumes the "monthly_price" returned is the *initial* discounted monthly price
-            # The actual recurring charge would revert after 3 months.
-            # For simplicity, we calculate the total saving over 3 months here.
-            trial_savings_monthly = monthly_price * 0.25 * 3
+            # Apply 25% off for the first 3 months on monthly price.
+            # This logic assumes the 'monthly_price' returned reflects the immediate charge.
+            # If the discount is for future months, the UI would need to reflect that.
+            trial_discount_per_month = monthly_price * 0.25
+            trial_savings_monthly = trial_discount_per_month * 3 # Total savings over 3 months
             discounts.append(f"25% off first 3 months (save ${trial_savings_monthly:.0f})")
             total_savings += trial_savings_monthly
-            # If you want the monthly_price to reflect the discounted rate for the initial months,
-            # you would do: monthly_price *= 0.75
+            # If you want to return the *discounted* monthly price for the first 3 months,
+            # you would do: monthly_price -= trial_discount_per_month
 
         return {
             'monthly_price': monthly_price,
@@ -626,9 +688,10 @@ class SecurityCore:
         """Adds an encrypted API key for a user."""
         key_id = secrets.token_urlsafe(16)
         encrypted_key = self.encrypt_api_key(api_key)
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO api_keys (id, user_id, name, encrypted_key, service, permissions, last_used, status)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -639,17 +702,20 @@ class SecurityCore:
             return key_id
         except Exception as e:
             logger.error(f"Error adding API key for user {user_id}: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     @log_api_call
     def update_api_key_last_used(self, key_id):
         """Updates the last_used timestamp for an API key."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute("""
                 UPDATE api_keys SET last_used = %s WHERE id = %s
             """, (datetime.now(), key_id))
@@ -660,48 +726,58 @@ class SecurityCore:
             return True
         except Exception as e:
             logger.error(f"Error updating last_used for API key {key_id}: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     @log_api_call
     def get_user_api_keys(self, user_id, include_inactive=False):
         """Retrieves and decrypts API keys for a user. Optionally includes inactive keys."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        query = 'SELECT id, name, encrypted_key, service, permissions, created_at, last_used, status FROM api_keys WHERE user_id = %s'
-        params = [user_id]
-        if not include_inactive:
-            query += ' AND status = %s'
-            params.append('active')
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            query = 'SELECT id, name, encrypted_key, service, permissions, created_at, last_used, status FROM api_keys WHERE user_id = %s'
+            params = [user_id]
+            if not include_inactive:
+                query += ' AND status = %s'
+                params.append('active')
 
-        cursor.execute(query, tuple(params))
-        keys = cursor.fetchall()
-        conn.close()
-        
-        decrypted_keys = []
-        for row in keys:
-            decrypted_key_value = self.decrypt_api_key(row[2])
-            if decrypted_key_value: # Only include if decryption was successful
-                decrypted_keys.append({
-                    'id': row[0],
-                    'name': row[1],
-                    'key': decrypted_key_value,
-                    'service': row[3],
-                    'permissions': row[4],
-                    'created_at': row[5],
-                    'last_used': row[6],
-                    'status': row[7]
-                })
-        return decrypted_keys
+            cursor.execute(query, tuple(params))
+            keys = cursor.fetchall()
+            
+            decrypted_keys = []
+            for row in keys:
+                decrypted_key_value = self.decrypt_api_key(row[2])
+                if decrypted_key_value: # Only include if decryption was successful
+                    decrypted_keys.append({
+                        'id': row[0],
+                        'name': row[1],
+                        'key': decrypted_key_value,
+                        'service': row[3],
+                        'permissions': row[4],
+                        'created_at': row[5],
+                        'last_used': row[6],
+                        'status': row[7]
+                    })
+            return decrypted_keys
+        except Exception as e:
+            logger.error(f"Error retrieving API keys for user {user_id}: {e}", exc_info=True)
+            raise
+        finally:
+            if conn:
+                return_db_connection(conn)
 
     @log_api_call
     def deactivate_api_key(self, key_id, user_id):
         """Deactivates an API key by ID for a specific user."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute("""
                 UPDATE api_keys SET status = 'inactive', created_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s
             """, (key_id, user_id))
@@ -715,23 +791,26 @@ class SecurityCore:
                 return False
         except Exception as e:
             logger.error(f"Error deactivating API key {key_id} for user {user_id}: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     def sanitize_input(self, val, maxlen):
         """Basic input sanitization."""
         if val is None:
             return ""
-        return str(val).strip()[:maxlen] # Added .strip() for leading/trailing whitespace
+        return str(val).strip()[:maxlen]
 
     def log_security_event(self, user_id, event_type, severity, description, source_ip=None, metadata=None, resolved=False):
         """Logs a security event to the database."""
         event_id = secrets.token_urlsafe(16)
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO security_events
                     (id, user_id, event_type, severity, description, source_ip, metadata, resolved)
@@ -742,16 +821,19 @@ class SecurityCore:
             return event_id
         except Exception as e:
             logger.error(f"Error logging security event for user {user_id}: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     def populate_mock_threat_intelligence(self, num_entries=100):
         """Populates mock threat intelligence data for demonstration."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
             # Delete only mock data to allow for manual entries or other sources
             cursor.execute("DELETE FROM threat_intelligence WHERE source = 'Mock Data';")
             conn.commit()
@@ -801,16 +883,19 @@ class SecurityCore:
                             last_updated = CURRENT_TIMESTAMP;
                     ''', (timestamp, indicator, threat_type, confidence, source, 'active'))
                 except psycopg2.IntegrityError:
-                    conn.rollback() # Handle potential race condition if unique constraint fails
+                    # Handle potential race condition or duplicate insert if unique constraint fails
+                    conn.rollback() 
                     logger.warning(f"Duplicate threat intelligence indicator {indicator} attempted, skipping.")
                     continue # Skip to next iteration
             conn.commit()
             logger.info(f"Populated {num_entries} mock threat intelligence entries.")
         except Exception as e:
             logger.error(f"Error populating mock threat intelligence: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     @log_api_call
     def search_threat_intelligence(self, indicator=None, threat_type=None, source=None, min_confidence=None, status='active', limit=100):
@@ -818,32 +903,33 @@ class SecurityCore:
         Searches for threat intelligence indicators in the database.
         Allows filtering by indicator, threat_type, source, minimum confidence, and status.
         """
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        query = "SELECT timestamp, indicator, threat_type, confidence, source, status, last_updated FROM threat_intelligence WHERE 1=1"
-        params = []
-
-        if indicator:
-            query += " AND indicator ILIKE %s" # Case-insensitive search
-            params.append(f'%{indicator}%')
-        if threat_type:
-            query += " AND threat_type = %s"
-            params.append(threat_type)
-        if source:
-            query += " AND source = %s"
-            params.append(source)
-        if min_confidence is not None:
-            query += " AND confidence >= %s"
-            params.append(min_confidence)
-        if status:
-            query += " AND status = %s"
-            params.append(status)
-        
-        query += " ORDER BY timestamp DESC LIMIT %s"
-        params.append(limit)
-
+        conn = None
         try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            query = "SELECT timestamp, indicator, threat_type, confidence, source, status, last_updated FROM threat_intelligence WHERE 1=1"
+            params = []
+
+            if indicator:
+                query += " AND indicator ILIKE %s" # Case-insensitive search
+                params.append(f'%{indicator}%')
+            if threat_type:
+                query += " AND threat_type = %s"
+                params.append(threat_type)
+            if source:
+                query += " AND source = %s"
+                params.append(source)
+            if min_confidence is not None:
+                query += " AND confidence >= %s"
+                params.append(min_confidence)
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+            
+            query += " ORDER BY timestamp DESC LIMIT %s"
+            params.append(limit)
+
             cursor.execute(query, tuple(params))
             results = cursor.fetchall()
             
@@ -864,7 +950,8 @@ class SecurityCore:
             logger.error(f"Error searching threat intelligence: {e}", exc_info=True)
             raise
         finally:
-            conn.close()
+            if conn:
+                return_db_connection(conn)
 
     # --- Idempotency Methods for Webhooks ---
     def is_event_already_processed(self, event_id):
@@ -877,13 +964,11 @@ class SecurityCore:
             return cursor.fetchone() is not None
         except Exception as e:
             logger.error(f"Error checking event idempotency for {event_id}: {e}", exc_info=True)
-            # Depending on desired behavior, you might want to re-raise or handle more gracefully.
-            # Returning False here means it will attempt to process the event, which could lead to duplicates
-            # if the DB is truly down. Better to assume un-processed or fail explicitly if critical.
-            raise # Re-raise to ensure integrity if DB is an issue
+            # Re-raise to ensure integrity if DB is an issue, as processing a duplicate is worse than failing
+            raise
         finally:
             if conn:
-                conn.close()
+                return_db_connection(conn)
 
     def mark_event_as_processed(self, event_id, event_type=None):
         """Marks a Stripe event as processed in the database."""
@@ -900,11 +985,13 @@ class SecurityCore:
         except psycopg2.IntegrityError:
             # This means the event_id already exists, it was likely processed concurrently
             logger.warning(f"Attempted to mark already processed event {event_id}.")
-            conn.rollback() # Rollback the insert attempt
+            if conn:
+                conn.rollback() # Rollback the insert attempt
         except Exception as e:
             logger.error(f"Error marking event {event_id} as processed: {e}", exc_info=True)
-            conn.rollback()
+            if conn:
+                conn.rollback()
             raise
         finally:
             if conn:
-                conn.close()
+                return_db_connection(conn)
