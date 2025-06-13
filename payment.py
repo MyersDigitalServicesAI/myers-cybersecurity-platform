@@ -80,3 +80,58 @@ class PaymentProcessor:
         except Exception as e:
             logger.error(f"Unexpected error retrieving customer by email {email}: {e}", exc_info=True)
             return None
+
+    def cancel_subscription(self, subscription_id: str):
+        """
+        Cancels a Stripe subscription.
+        """
+        try:
+            logger.info(f"Attempting to cancel subscription: {subscription_id}")
+            subscription = stripe.Subscription.delete(subscription_id) # Or .retrieve followed by .delete for more control
+            logger.info(f"Subscription {subscription_id} cancelled.")
+            return {"status": "success", "subscription": subscription}
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe API error cancelling subscription {subscription_id}: {e}", exc_info=True)
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error(f"Unexpected error cancelling subscription {subscription_id}: {e}", exc_info=True)
+            return {"error": "An unexpected error occurred during subscription cancellation."}
+
+    def update_subscription_plan(self, subscription_id: str, new_price_id: str):
+        """
+        Updates a Stripe subscription to a new plan (price ID).
+        Handles proration by default based on Stripe's settings.
+        """
+        try:
+            logger.info(f"Attempting to update subscription {subscription_id} to new price: {new_price_id}")
+            subscription = stripe.Subscription.retrieve(subscription_id)
+            updated_subscription = stripe.Subscription.modify(
+                subscription_id,
+                items=[{
+                    'id': subscription['items']['data'][0].id, # Get the subscription item ID
+                    'price': new_price_id,
+                }]
+            )
+            logger.info(f"Subscription {subscription_id} updated to price {new_price_id}.")
+            return {"status": "success", "subscription": updated_subscription}
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe API error updating subscription {subscription_id}: {e}", exc_info=True)
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error(f"Unexpected error updating subscription {subscription_id}: {e}", exc_info=True)
+            return {"error": "An unexpected error occurred during subscription update."}
+
+    def retrieve_subscription(self, subscription_id: str):
+        """
+        Retrieves a Stripe subscription object.
+        """
+        try:
+            logger.info(f"Attempting to retrieve subscription: {subscription_id}")
+            subscription = stripe.Subscription.retrieve(subscription_id)
+            return {"status": "success", "subscription": subscription}
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe API error retrieving subscription {subscription_id}: {e}", exc_info=True)
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving subscription {subscription_id}: {e}", exc_info=True)
+            return {"error": "An unexpected error occurred during subscription retrieval."}
