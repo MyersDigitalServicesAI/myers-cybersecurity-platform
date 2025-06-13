@@ -1,4 +1,3 @@
-# payment.py (Add or modify existing class)
 import stripe
 import os
 import logging
@@ -14,7 +13,18 @@ class PaymentProcessor:
         logger.info("Stripe PaymentProcessor initialized.")
 
     def create_checkout_session(self, price_id, customer_email, success_url, cancel_url):
-        # ... (your existing code for create_checkout_session) ...
+        """
+        Creates a Stripe checkout session for a new subscription.
+
+        Args:
+            price_id (str): The ID of the Stripe Price object for the subscription.
+            customer_email (str): The email of the customer for the checkout session.
+            success_url (str): The URL to redirect to after successful checkout.
+            cancel_url (str): The URL to redirect to if checkout is cancelled.
+
+        Returns:
+            dict: A dictionary containing 'checkout_url' on success, or 'error' on failure.
+        """
         try:
             logger.info(f"Attempting to create Stripe checkout session for email: {customer_email} with price_id: {price_id}")
             session = stripe.checkout.Session.create(
@@ -68,11 +78,15 @@ class PaymentProcessor:
         """
         Retrieves a Stripe Customer ID by email.
         Note: Stripe recommends storing customer IDs in your DB for efficiency.
+        This method should primarily be used for initial lookup or reconciliation.
         """
         try:
+            logger.info(f"Attempting to retrieve Stripe customer by email: {email}")
             customers = stripe.Customer.list(email=email, limit=1)
             if customers.data:
+                logger.info(f"Found Stripe customer ID for {email}: {customers.data[0].id}")
                 return customers.data[0].id
+            logger.info(f"No Stripe customer found for email: {email}")
             return None
         except stripe.error.StripeError as e:
             logger.error(f"Stripe API error retrieving customer by email {email}: {e}", exc_info=True)
@@ -87,8 +101,9 @@ class PaymentProcessor:
         """
         try:
             logger.info(f"Attempting to cancel subscription: {subscription_id}")
-            subscription = stripe.Subscription.delete(subscription_id) # Or .retrieve followed by .delete for more control
-            logger.info(f"Subscription {subscription_id} cancelled.")
+            # By default, this immediately cancels. For end-of-period cancellation, use 'at_period_end=True'
+            subscription = stripe.Subscription.delete(subscription_id)
+            logger.info(f"Subscription {subscription_id} cancelled successfully.")
             return {"status": "success", "subscription": subscription}
         except stripe.error.StripeError as e:
             logger.error(f"Stripe API error cancelling subscription {subscription_id}: {e}", exc_info=True)
@@ -105,12 +120,20 @@ class PaymentProcessor:
         try:
             logger.info(f"Attempting to update subscription {subscription_id} to new price: {new_price_id}")
             subscription = stripe.Subscription.retrieve(subscription_id)
+            
+            # Ensure there's at least one item to modify
+            if not subscription['items']['data']:
+                logger.warning(f"Subscription {subscription_id} has no items to update.")
+                return {"error": "No subscription items found to update."}
+
             updated_subscription = stripe.Subscription.modify(
                 subscription_id,
                 items=[{
-                    'id': subscription['items']['data'][0].id, # Get the subscription item ID
+                    'id': subscription['items']['data'][0].id, # Get the first subscription item ID
                     'price': new_price_id,
                 }]
+                # You can add 'proration_behavior' (e.g., 'always_invoice', 'create_prorations', 'none')
+                # if you want to control how proration is handled. Default is 'create_prorations'.
             )
             logger.info(f"Subscription {subscription_id} updated to price {new_price_id}.")
             return {"status": "success", "subscription": updated_subscription}
@@ -135,3 +158,28 @@ class PaymentProcessor:
         except Exception as e:
             logger.error(f"Unexpected error retrieving subscription {subscription_id}: {e}", exc_info=True)
             return {"error": "An unexpected error occurred during subscription retrieval."}
+
+    def get_active_prices(self):
+        """
+        Retrieves a list of active Price objects from Stripe.
+        This is crucial for dynamically displaying available subscription plans.
+        """
+        try:
+            logger.info("Attempting to retrieve active prices from Stripe.")
+            # Fetch prices that are active and linked to products that are also active
+            prices = stripe.Price.list(active=True, expand=['data.product'])
+            
+            # Filter prices to ensure they are for active products and are recurring (subscription plans)
+            active_subscription_prices = [
+                price for price in prices.data
+                if price.product and price.product.active and price.recurring
+            ]
+            
+            logger.info(f"Successfully retrieved {len(active_subscription_prices)} active subscription prices.")
+            return {"status": "success", "prices": active_subscription_prices}
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe API error retrieving active prices: {e}", exc_info=True)
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving active prices: {e}", exc_info=True)
+            return {"error": "An unexpected error occurred while fetching active prices."}
