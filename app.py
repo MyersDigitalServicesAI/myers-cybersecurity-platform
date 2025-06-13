@@ -44,6 +44,8 @@ from admin_panel_module import show_admin_panel
 def get_security_core_instance():
     # init_db_pool() should be called inside SecurityCorePG's constructor or a dedicated utils.database.init_db_pool()
     # Ensure your SecurityCorePG's __init__ calls init_db_pool from utils.database.
+    # If init_db_pool is a global function in utils.database, call it explicitly here if not handled by SecurityCore init.
+    # Example: from utils.database import init_db_pool; init_db_pool()
     return SecurityCore()
 
 @st.cache_resource(ttl=None)
@@ -56,6 +58,162 @@ def get_email_automation_instance():
 
 # --- Page Functions ---
 
+# Placeholder for dashboard and subscription pages
+def show_dashboard_page():
+    st.title("Dashboard")
+    st.write(f"Welcome, {st.session_state.first_name} {st.session_state.last_name} ({st.session_state.user_email})!")
+    st.write(f"Your Company: {st.session_state.company_name}")
+    st.write(f"Your Plan: {st.session_state.selected_plan.title()}")
+    st.write("This is your main dashboard. More features will appear here based on your subscription.")
+
+def show_subscription_page():
+    st.title("Manage Your Subscription")
+    st.write("Details about your current plan, billing, and options to upgrade or manage your subscription.")
+    user_details = st.session_state.security_core.get_user_details(st.session_state.user_id)
+    if user_details:
+        st.write(f"**Current Plan:** {user_details.get('plan', 'N/A').title()}")
+        st.write(f"**Payment Status:** {user_details.get('payment_status', 'N/A').replace('_', ' ').title()}")
+        if user_details.get('is_trial'):
+            st.write(f"**Trial Ends:** {user_details.get('trial_ends').strftime('%Y-%m-%d') if user_details.get('trial_ends') else 'N/A'}")
+        if user_details.get('subscription_id'):
+            st.write(f"**Subscription ID:** {user_details.get('subscription_id')}")
+        st.write(f"**Auto-renewal:** {'Enabled' if user_details.get('auto_renewal') else 'Disabled'}")
+
+        st.markdown("---")
+        st.subheader("Billing Details")
+        # In a real app, you'd fetch more detailed billing info from Stripe or your payment processor.
+        st.info("Billing information will appear here.")
+        
+        # Example of displaying calculated prices (using the new function)
+        # Assuming you have a way to get the base price for the user's plan
+        # For demonstration, let's assume 'essentials' is $50, 'basic' is $100
+        plan_prices = {
+            'essentials': 50.0,
+            'basic': 100.0,
+            'professional': 200.0,
+            'business': 500.0,
+            'enterprise': 1000.0
+        }
+        
+        user_plan = user_details.get('plan')
+        user_billing_period = user_details.get('billing_period', 'monthly') # Assuming this field exists
+        
+        if user_plan and user_plan in plan_prices:
+            base_price = plan_prices[user_plan]
+            pricing_info = st.session_state.security_core.calculate_discounted_price(
+                base_price, user_plan, user_billing_period, st.session_state.user_id
+            )
+            st.write("#### Your Current Plan Pricing Overview:")
+            st.json(pricing_info)
+        else:
+            st.warning("Could not retrieve detailed pricing for your plan.")
+
+    else:
+        st.error("Could not load your subscription details.")
+
+def show_api_keys_page():
+    st.title("My API Keys")
+    st.write("Manage your API keys for integrating with our services.")
+
+    security_core = st.session_state.security_core
+    user_id = st.session_state.user_id
+
+    # Display existing API keys
+    st.subheader("Existing API Keys")
+    api_keys = security_core.list_api_keys(user_id)
+    if api_keys:
+        keys_data = []
+        for key in api_keys:
+            keys_data.append({
+                "ID": key['id'],
+                "Name": key['name'],
+                "Service": key['service'],
+                "Permissions": key['permissions'],
+                "Created At": key['created_at'].strftime('%Y-%m-%d %H:%M') if key['created_at'] else 'N/A',
+                "Last Used": key['last_used'].strftime('%Y-%m-%d %H:%M') if key['last_used'] else 'Never',
+                "Status": key['status'].title()
+            })
+        st.dataframe(pd.DataFrame(keys_data), use_container_width=True)
+
+        # Actions for existing keys
+        st.markdown("---")
+        st.subheader("Manage Existing Keys")
+        col_select, col_action = st.columns([0.7, 0.3])
+        
+        selected_key_id = col_select.selectbox(
+            "Select API Key to manage",
+            options=[k['id'] for k in api_keys],
+            format_func=lambda x: next((k['name'] for k in api_keys if k['id'] == x), x),
+            key="manage_api_key_select"
+        )
+
+        if selected_key_id:
+            selected_key_info = next((k for k in api_keys if k['id'] == selected_key_id), None)
+            if selected_key_info:
+                st.write(f"**Selected Key:** {selected_key_info['name']} (Status: {selected_key_info['status'].title()})")
+                
+                if selected_key_info['status'] == 'active':
+                    if col_action.button("Deactivate", key="deactivate_api_key_button", help="Deactivate this API key"):
+                        with st.spinner(f"Deactivating key {selected_key_info['name']}..."):
+                            if security_core.deactivate_api_key(selected_key_id, user_id):
+                                st.success(f"API Key '{selected_key_info['name']}' deactivated successfully.")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed to deactivate API Key '{selected_key_info['name']}'.")
+                elif selected_key_info['status'] == 'inactive':
+                    if col_action.button("Activate", key="activate_api_key_button", type="primary", help="Activate this API key"):
+                        with st.spinner(f"Activating key {selected_key_info['name']}..."):
+                            if security_core.activate_api_key(selected_key_id, user_id):
+                                st.success(f"API Key '{selected_key_info['name']}' activated successfully.")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed to activate API Key '{selected_key_info['name']}'.")
+                
+                if col_action.button("Delete", key="delete_api_key_button", help="Permanently delete this API key"):
+                    if st.warning(f"Are you sure you want to permanently delete API Key '{selected_key_info['name']}'? This cannot be undone."):
+                        if st.button("Confirm Delete", key="confirm_delete_api_key", type="secondary"):
+                            with st.spinner(f"Deleting key {selected_key_info['name']}..."):
+                                if security_core.delete_api_key(selected_key_id, user_id):
+                                    st.success(f"API Key '{selected_key_info['name']}' deleted successfully.")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Failed to delete API Key '{selected_key_info['name']}'.")
+            else:
+                st.warning("Please select an API key to manage.")
+    else:
+        st.info("You don't have any API keys yet.")
+
+    # Add new API key form
+    st.markdown("---")
+    st.subheader("Generate New API Key")
+    with st.form("new_api_key_form"):
+        key_name = st.text_input("Key Name", help="A descriptive name for your API key (e.g., 'My Dashboard Integration')", max_chars=255)
+        service = st.text_input("Service", help="Which service will this key be used for (e.g., 'Stripe', 'OpenAI')", max_chars=255)
+        permissions = st.selectbox("Permissions", options=list(security_core.API_KEY_PERMISSIONS), help="Permissions level for this key.", index=0)
+        
+        submitted = st.form_submit_button("Generate Key", type="primary")
+
+        if submitted:
+            if not key_name or not service:
+                st.error("Key Name and Service are required.")
+            else:
+                # Generate a secure random key. This is the actual API key value.
+                new_api_key_value = secrets.token_urlsafe(32) 
+                
+                with st.spinner("Generating new API key..."):
+                    generated_key_id = security_core.add_api_key(
+                        user_id, key_name, new_api_key_value, service, permissions
+                    )
+                    if generated_key_id:
+                        st.success("API Key generated and stored securely!")
+                        st.markdown(f"**New API Key ID:** `{generated_key_id}`")
+                        st.markdown(f"**Your new API Key (copy now, it won't be shown again!):**")
+                        st.code(new_api_key_value, language="plaintext")
+                        st.warning("Please copy the API key above now. For security reasons, we do not store this plain-text key and cannot show it again.")
+                        st.rerun() # Rerun to update the list of keys
+                    else:
+                        st.error("Failed to generate API Key. Please check logs for details.")
+
 # --- Password Reset Functions (New) ---
 def forgot_password_page(security_core_instance: SecurityCore, email_automation_instance: EmailAutomation):
     st.title("Forgot Your Password?")
@@ -67,7 +225,8 @@ def forgot_password_page(security_core_instance: SecurityCore, email_automation_
         if email:
             with st.spinner("Sending password reset link..."):
                 try:
-                    token = security_core_instance.generate_password_reset_token(email)
+                    # In SecurityCore, generate_password_reset_token should handle user lookup and token storage
+                    token = security_core_instance.generate_password_reset_token(email) 
                     if token:
                         app_base_url = os.getenv('APP_URL', 'http://localhost:8501')
                         reset_link = f"{app_base_url}/?page=reset_password&token={token}"
@@ -80,8 +239,9 @@ def forgot_password_page(security_core_instance: SecurityCore, email_automation_
                             st.error("Failed to send the password reset email. Please try again later.")
                             st.toast("Email failed!", icon="❌")
                     else:
-                        st.error("Could not generate a reset link for this email. Please ensure the email is registered.")
-                        st.toast("Email not found!", icon="⚠️")
+                        # For security, avoid revealing if email exists or not. Give a generic message.
+                        st.success("If an account with that email exists, a password reset link has been sent.")
+                        st.toast("Attempted to send link!", icon="✅")
                 except Exception as e:
                     st.error(f"An unexpected error occurred: {e}")
                     logger.error(f"Error in forgot_password_page for {email}: {e}", exc_info=True)
@@ -113,11 +273,14 @@ def reset_password_page(security_core_instance: SecurityCore):
     if st.button("Reset Password", key="reset_password_button", type="primary"):
         if new_password and confirm_password:
             if new_password == confirm_password:
-                if len(new_password) < 8:
-                    st.error("Password must be at least 8 characters long.")
+                # Validate password strength using the SecurityCore method
+                is_strong, strength_message = security_core_instance.validate_password_strength(new_password)
+                if not is_strong:
+                    st.error(strength_message)
                 else:
                     with st.spinner("Resetting your password..."):
                         try:
+                            # In SecurityCore, reset_user_password should hash the password and update DB
                             if security_core_instance.reset_user_password(user_info['user_id'], new_password):
                                 st.success("Your password has been reset successfully! You can now log in.")
                                 st.balloons()
@@ -149,100 +312,4 @@ def show_login_page():
                     user_auth_result, error_message = st.session_state.security_core.authenticate_user(email, password)
 
                 if user_auth_result:
-                    user_details = st.session_state.security_core.get_user_details(user_auth_result['id'])
-                    if user_details and user_details.get('email_verified'):
-                        st.session_state.authenticated = True
-                        st.session_state.user_id = user_auth_result['id']
-                        st.session_state.user_email = user_details['email']
-                        st.session_state.user_role = user_details['role']
-                        st.session_state.company_name = user_details['company']
-                        st.session_state.selected_plan = user_details['plan']
-                        st.session_state.first_name = user_details['first_name']
-                        st.session_state.last_name = user_details['last_name']
-                        st.success("Login successful!")
-                        st.session_state.current_page = 'dashboard'
-                        st.rerun()
-                    elif user_details and not user_details.get('email_verified'):
-                        st.warning("Your email address is not verified. Please check your inbox for the verification link.")
-                        st.session_state.pending_verification = {"user_id": user_details['id'], "email": user_details['email']}
-                        st.session_state.current_page = "awaiting_verification"
-                        st.rerun()
-                else:
-                    st.error(error_message or "Invalid email or password.")
-                    st.toast("Login failed!", icon="❌")
-            else:
-                st.error("Please enter both email and password.")
-                st.toast("Missing credentials!", icon="⚠️")
-    st.markdown("---")
-    st.write("Don't have an account?")
-    if st.button("Sign Up Now", key="go_to_signup"):
-        st.session_state.current_page = "signup"
-        st.rerun()
-    if st.button("Forgot Password?", key="go_to_forgot_password"): # Added Forgot Password button
-        st.session_state.current_page = "forgot_password"
-        st.rerun()
-
-
-def main():
-    st.set_page_config(page_title="Myers Cybersecurity", page_icon="🔒", layout="wide")
-
-    # --- Initialize Services (using cached instances) ---
-    st.session_state.security_core = get_security_core_instance()
-    st.session_state.payment_processor = get_payment_processor_instance()
-    st.session_state.email_automation = get_email_automation_instance()
-
-    if st.session_state.email_automation:
-        st.session_state.email_event_handler = EmailEventHandler(
-            st.session_state.security_core, st.session_state.email_automation
-        )
-    else:
-        st.session_state.email_event_handler = None # Ensure it's None if email_automation failed
-
-
-    # --- Handle Query Parameters for Email Verification and Password Reset ---
-    query_params = st.query_params
-    if query_params.get("page") == "verify":
-        st.session_state.current_page = "verify"
-    elif query_params.get("page") == "reset_password": # New: Handle reset password page
-        st.session_state.current_page = "reset_password"
-    elif "current_page" not in st.session_state:
-        st.session_state.current_page = "home"
-
-    # --- Sidebar Navigation ---
-    st.sidebar.title("Navigation")
-    if st.session_state.get('authenticated'):
-        st.sidebar.markdown(f"**Logged in as:** {st.session_state.user_email}")
-        st.sidebar.markdown(f"**Role:** {st.session_state.user_role.title()}")
-        st.sidebar.markdown("---")
-        st.sidebar.button("Dashboard", on_click=lambda: st.session_state.update(current_page='dashboard'), use_container_width=True)
-        st.sidebar.button("Threat Intelligence", on_click=lambda: st.session_state.update(current_page='threat_intelligence'), use_container_width=True)
-        st.sidebar.button("My API Keys", on_click=lambda: st.session_state.update(current_page='api_keys'), use_container_width=True)
-        st.sidebar.button("Subscription", on_click=lambda: st.session_state.update(current_page='subscription'), use_container_width=True)
-        if st.session_state.user_role == 'admin':
-            st.sidebar.button("Admin Panel", on_click=lambda: st.session_state.update(current_page='admin_panel'), use_container_width=True)
-        st.sidebar.button("Logout", on_click=lambda: [st.session_state.clear(), st.session_state.update(current_page='home')], use_container_width=True)
-    else:
-        # Public navigation
-        if st.sidebar.button("Home", use_container_width=True):
-            st.session_state.current_page = 'home'
-            if 'setup_step' in st.session_state:
-                del st.session_state.setup_step
-            st.rerun()
-        if st.sidebar.button("Sign Up", use_container_width=True):
-            st.session_state.current_page = "signup"
-            st.rerun()
-        if st.sidebar.button("Login", use_container_width=True):
-            st.session_state.current_page = "login"
-            st.rerun()
-
-    # --- Initial Setup Wizard Check ---
-    admin_user_exists = False
-    try:
-        user = st.session_state.security_core.get_user_by_email(os.getenv("SETUP_ADMIN_EMAIL"))
-        if user and user.get('role') == 'admin':
-            admin_user_exists = True
-    except Exception as e:
-        logger.error(f"Error checking for admin user during app startup: {e}", exc_info=True)
-
-    if not admin_user_exists and not st.session_state.get('initial_setup_done', False):
-        st.session_
+                    user_
