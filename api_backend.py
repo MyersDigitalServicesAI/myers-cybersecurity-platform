@@ -11,7 +11,7 @@ from email_automation import EmailAutomation
 
 # Initialize services (consider using FastAPI's Depends for dependency injection)
 # For simplicity, initializing directly here for now, but DI is better for testing/modularity
-db_security_core = SecurityCorePG()
+db_security_core = SecurityCore()
 payment_processor = PaymentProcessor()
 email_automation = EmailAutomation()
 
