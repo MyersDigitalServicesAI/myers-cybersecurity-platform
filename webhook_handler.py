@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Internal Module Imports ---
-from security_core_pg import SecurityCore # Updated import
+from security_core import SecurityCore # Updated import
 from billing import BillingManager # New import
 from email_automation import EmailAutomation, EmailEventHandler
 
