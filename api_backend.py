@@ -6,7 +6,7 @@ import os
 import logging
 
 # Assuming these are adapted to be imported and used by FastAPI
-from security_core_pg import SecurityCorePG
+from security_core import SecurityCore
 from payment import PaymentProcessor
 from email_automation import EmailAutomation
 
