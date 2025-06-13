@@ -1,7 +1,7 @@
 import streamlit as st
 import secrets
 from datetime import datetime
-from security_core_pg import SecurityCore, PaymentProcessor
+from security_core import SecurityCore, PaymentProcessor
 
 class SetupWizard:
     def __init__(self, security_core):
