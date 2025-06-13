@@ -34,16 +34,15 @@ if missing_vars:
 
 
 # --- Import modules ---
-# Assuming SecurityCorePG has been updated to use connection pooling internally
-from security_core_pg import SecurityCorePG as SecurityCore # Renamed for clarity in imports
+from security_core import SecurityCore
 from payment import PaymentProcessor
-from billing import BillingManager # Still relevant if app ever directly calls methods from it
+from billing import BillingManager
 from email_automation import EmailAutomation, EmailEventHandler
 from setup_wizard import SetupWizard
 from signup_and_email_verification import show_signup_page, show_email_verification_page, show_awaiting_verification_page
-# Corrected typo:
 from threat_detection_dashboard import show_threat_detection_dashboard
 from admin_panel_module import show_admin_panel
+
 
 # --- Streamlit Caching for Services ---
 # Initialize services only once for the entire Streamlit app lifecycle.
@@ -123,12 +122,12 @@ def show_api_keys_page():
     st.title("My API Keys")
     st.write("Manage your API keys for integrating with our services.")
 
-    security_core = st.session_state.security_core
+    security_Core = st.session_state.security_core
     user_id = st.session_state.user_id
 
     # Display existing API keys
     st.subheader("Existing API Keys")
-    api_keys = security_core.list_api_keys(user_id)
+    api_keys = Security_core.list_api_keys(user_id)
     if api_keys:
         keys_data = []
         for key in api_keys:
@@ -163,7 +162,7 @@ def show_api_keys_page():
                 if selected_key_info['status'] == 'active':
                     if col_action.button("Deactivate", key="deactivate_api_key_button", help="Deactivate this API key"):
                         with st.spinner(f"Deactivating key {selected_key_info['name']}..."):
-                            if security_core.deactivate_api_key(selected_key_id, user_id):
+                            if Security_core.deactivate_api_key(selected_key_id, user_id):
                                 st.success(f"API Key '{selected_key_info['name']}' deactivated successfully.")
                                 st.rerun()
                             else:
@@ -171,7 +170,7 @@ def show_api_keys_page():
                 elif selected_key_info['status'] == 'inactive':
                     if col_action.button("Activate", key="activate_api_key_button", type="primary", help="Activate this API key"):
                         with st.spinner(f"Activating key {selected_key_info['name']}..."):
-                            if security_core.activate_api_key(selected_key_id, user_id):
+                            if Security_core.activate_api_key(selected_key_id, user_id):
                                 st.success(f"API Key '{selected_key_info['name']}' activated successfully.")
                                 st.rerun()
                             else:
