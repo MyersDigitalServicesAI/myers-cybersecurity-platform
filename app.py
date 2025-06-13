@@ -1,29 +1,37 @@
 import streamlit as st
 import os
-import secrets # Added for generating secure API keys
+import secrets
 from dotenv import load_dotenv
 import logging
-import pandas as pd # Needed for admin_panel_module
-from datetime import datetime # Added for password reset expiry
+import pandas as pd
+from datetime import datetime
 
-load_dotenv() # Load environment variables at the very beginning
+# --- Load environment variables for local development ---
+load_dotenv()
 
 # --- Configure Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Set up environment variables (if not already set in .env or system) ---
-# These defaults are for development; replace with actual values for production.
-os.environ['DATABASE_URL'] = os.getenv('DATABASE_URL', 'postgresql://user:password@localhost:5432/mydatabase')
-os.environ['STRIPE_SECRET_KEY'] = os.getenv('STRIPE_SECRET_KEY', 'sk_test_YOUR_STRIPE_SECRET_KEY')
-os.environ['STRIPE_WEBHOOK_SECRET'] = os.getenv('STRIPE_WEBHOOK_SECRET', 'whsec_YOUR_STRIPE_WEBHOOK_SIGNING_SECRET')
-os.environ['SENDER_EMAIL'] = os.getenv('SENDER_EMAIL', 'noreply@yourdomain.com')
-os.environ['SMTP_SERVER'] = os.getenv('SMTP_SERVER', 'smtp.sendgrid.net')
-os.environ['SMTP_PORT'] = os.getenv('SMTP_PORT', '587')
-os.environ['SMTP_USER'] = os.getenv('SMTP_USER', 'apikey')
-os.environ['SMTP_API_KEY'] = os.getenv('SMTP_API_KEY', 'SG.YOUR_ACTUAL_SENDGRID_API_KEY')
-os.environ['APP_URL'] = os.getenv('APP_URL', 'http://localhost:8501')
-os.environ['SETUP_ADMIN_EMAIL'] = os.getenv("SETUP_ADMIN_EMAIL", "admin@yourcompany.com")
+# --- Validate Required Environment Variables ---
+required_env_vars = [
+    'DATABASE_URL',
+    'STRIPE_SECRET_KEY',
+    'STRIPE_WEBHOOK_SECRET',
+    'SENDER_EMAIL',
+    'SMTP_SERVER',
+    'SMTP_PORT',
+    'SMTP_USER',
+    'SMTP_API_KEY',
+    'APP_URL',
+    'SETUP_ADMIN_EMAIL'
+]
+
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    logger.critical(f"Missing required environment variables: {', '.join(missing_vars)}")
+    raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
 
 # --- Import modules ---
 # Assuming SecurityCorePG has been updated to use connection pooling internally
