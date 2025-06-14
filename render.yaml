@@ -6,8 +6,29 @@ services:
     branch: main
     plan: free
     autoDeploy: true
+    healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: DOMAIN
         value: https://myers-cybersecurity.onrender.com
+      - key: DATABASE_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: SMTP_API_KEY
+        sync: false
+      - key: SMTP_SERVER
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SENDER_EMAIL
+        sync: false
+      - key: APP_URL
+        value: https://myers-cybersecurity.onrender.com
+      - key: SETUP_ADMIN_EMAIL
+        sync: false
