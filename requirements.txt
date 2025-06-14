@@ -29,3 +29,10 @@ stripe==9.7.0              # Stripe API client for payment processing
 
 # Data Visualization
 plotly==5.21.0             # For interactive plotting and data visualization
+
+# Dev Tools (Optional)
+flake8                     # For code linting
+black                      # Code formatter
+isort                      # Sort imports automatically
+pytest                     # Unit testing framework
+mypy                       # Static type checker for Python
