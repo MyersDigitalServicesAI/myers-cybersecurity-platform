@@ -10,6 +10,7 @@ from typing import Annotated
 from pydantic import BaseModel, EmailStr
 import os
 import logging
+import secrets
 
 # Assuming these are adapted to be imported and used by FastAPI
 from security_core import SecurityCore
@@ -56,7 +57,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl=token_url_path)
 class SignupModel(BaseModel):
     email: EmailStr
     password: str
-    full_name: str
+    company: str
+    first_name: str
+    last_name: str
+    plan: str
 
 class APIKeyCreateModel(BaseModel):
     label: str
@@ -114,20 +118,29 @@ async def generate_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends
 
 @app.post("/signup")
 async def signup_user(signup_data: SignupModel):
-    success, error = db_security_core.register_user(signup_data.dict())
-    if not success:
-        logger.error(f"Signup failed for {signup_data.email}: {error}")
-        raise HTTPException(status_code=400, detail=error)
+    user_id, message = db_security_core.create_user(
+        email=signup_data.email,
+        password=signup_data.password,
+        company=signup_data.company,
+        first_name=signup_data.first_name,
+        last_name=signup_data.last_name,
+        plan=signup_data.plan,
+        email_verified=False
+    )
+    if not user_id:
+        logger.error(f"Signup failed for {signup_data.email}: {message}")
+        raise HTTPException(status_code=400, detail=message)
     email_automation.send_verification_email(signup_data.email)
     logger.info(f"New signup registered: {signup_data.email}")
     return {"message": "Signup successful. Please check your email to verify your account."}
 
 @app.post("/api-keys")
 async def create_api_key(api_key_data: APIKeyCreateModel, current_user_id: Annotated[str, Depends(get_current_user_id)]):
-    result = db_security_core.add_api_key(current_user_id, api_key_data.label)
+    api_key_value = secrets.token_urlsafe(32)
+    result = db_security_core.add_api_key(current_user_id, api_key_data.label, api_key=api_key_value, service="custom", permissions="read")
     email_automation.send_admin_alert(f"API Key created by user ID {current_user_id}")
     logger.info(f"API key created for user ID {current_user_id}")
-    return {"message": "API key created.", "key": result}
+    return {"message": "API key created.", "key_id": result, "api_key": api_key_value}
 
 @app.post("/forgot-password")
 async def forgot_password(payload: PasswordResetRequest):
