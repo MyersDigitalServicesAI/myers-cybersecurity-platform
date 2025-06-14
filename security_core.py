@@ -55,7 +55,8 @@ class SecurityCore:
         self.TOKEN_EXPIRE_MINUTES = 60
         
         self.encryption_key = self.get_or_create_encryption_key()
-        self.init_database()    self.TOKEN_EXPIRE_MINUTES = 60
+        self.init_database()    
+        self.TOKEN_EXPIRE_MINUTES = 60
 
     def create_access_token(self, data: dict):
         to_encode = data.copy()
