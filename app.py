@@ -80,8 +80,9 @@ def verify_captcha(response_token):
 
 # --- Rate Limiting Decorator ---
 @sleep_and_retry
-@limits(calls=RATE_LIMIT_CALLS, period=RATE_LIMIT_PERIOD)  # Rate limits are now externalized via env vars
+@limits(calls=RATE_LIMIT_CALLS, period=RATE_LIMIT_PERIOD)  # Rate limits (calls per seconds) defined in env vars
 # This decorator is used to wrap login/signup/reset functions to prevent abuse
+# Consider moving this to a shared utility if used in multiple modules
 def rate_limited_action():
     return True
 
