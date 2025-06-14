@@ -27,7 +27,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 # --- Utility Functions (can be moved to a separate file, e.g., auth_utils.py) ---
 async def get_current_user_id(token: Annotated[str, Depends(oauth2_scheme)]):
     # This function would call db_security_core to verify the token and return user ID
-    user_id = db_security_core.verify_access_token(token) # You'd implement this in SecurityCorePG
+    user_id = db_security_core.verify_access_token(token) # You'd implement this in SecurityCore
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
