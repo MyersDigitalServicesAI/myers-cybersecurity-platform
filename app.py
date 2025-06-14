@@ -1,16 +1,12 @@
 import streamlit as st
 import os
 import secrets
-from dotenv import load_dotenv
 import logging
 import pandas as pd
 from datetime import datetime
 from ratelimit import limits, sleep_and_retry
 import time
 import requests
-
-# --- Load environment variables for local development ---
-load_dotenv()
 
 # --- Configure Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -80,9 +76,7 @@ def verify_captcha(response_token):
 
 # --- Rate Limiting Decorator ---
 @sleep_and_retry
-@limits(calls=RATE_LIMIT_CALLS, period=RATE_LIMIT_PERIOD)  # Rate limits (calls per seconds) defined in env vars
-# This decorator is used to wrap login/signup/reset functions to prevent abuse
-# Consider moving this to a shared utility if used in multiple modules
+@limits(calls=RATE_LIMIT_CALLS, period=RATE_LIMIT_PERIOD)
 def rate_limited_action():
     return True
 
