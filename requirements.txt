@@ -20,7 +20,6 @@ sendgrid==6.11.0           # SendGrid API client for sending emails
 
 # HTTP Client
 requests==2.31.0           # Popular HTTP client library for making web requests
-ratelimit==2.2.1           # For rate limiting logic (login/signup protection)
 
 # Environment Variables
 python-dotenv==1.0.1       # For loading environment variables from .env files
