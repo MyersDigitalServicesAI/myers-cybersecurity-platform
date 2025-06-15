@@ -30,31 +30,38 @@ required_env_vars = [
 
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
 if missing_vars:
-    logger.critical(f"Missing required environment variables: {', '.join(missing_vars)}")
-    raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}SENDER_EMAILs constructor or a dedicated utils.database.init_db_pool()
-    # Ensure your SecurityCorePGSENDER_EMAILDashboard")
+    joined = ', '.join(missing_vars)
+    logger.critical(f"Missing required environment variables: {joined}")
+    raise EnvironmentError(f"Missing required environment variables: {joined}")
+
+# --- Dashboard welcome UI (move to function if needed) ---
+if 'first_name' in st.session_state and 'last_name' in st.session_state and 'user_email' in st.session_state:
     st.write(f"Welcome, {st.session_state.first_name} {st.session_state.last_name} ({st.session_state.user_email})!")
-    st.write(f"Your Company: {st.session_state.company_name}")
-    st.write(f"Your Plan: {st.session_state.selected_plan.title()}")
+    st.write(f"Your Plan: {st.session_state.get('selected_plan', 'N/A').title()}")
     st.write("This is your main dashboard. More features will appear here based on your subscription.")
 
+# --- Subscription Page ---
 def show_subscription_page():
     st.title("Manage Your Subscription")
     st.write("Details about your current plan, billing, and options to upgrade or manage your subscription.")
+    
     user_details = st.session_state.security_core.get_user_details(st.session_state.user_id)
     if user_details:
         st.write(f"**Current Plan:** {user_details.get('plan', 'N/A').title()}")
         st.write(f"**Payment Status:** {user_details.get('payment_status', 'N/A').replace('_', ' ').title()}")
+        
         if user_details.get('is_trial'):
             st.write(f"**Trial Ends:** {user_details.get('trial_ends').strftime('%Y-%m-%d') if user_details.get('trial_ends') else 'N/A'}")
+        
         if user_details.get('subscription_id'):
             st.write(f"**Subscription ID:** {user_details.get('subscription_id')}")
+        
         st.write(f"**Auto-renewal:** {'Enabled' if user_details.get('auto_renewal') else 'Disabled'}")
 
         st.markdown("---")
         st.subheader("Billing Details")
-        # In a real app, you'd fetch more detailed billing info from Stripe or your payment processor.
         st.info("Billing information will appear here.")
+
         
         # Example of displaying calculated prices (using the new function)
         # Assuming you have a way to get the base price for the user's plan
