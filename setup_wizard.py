@@ -8,7 +8,7 @@ class SetupWizard:
         self.security_core = security_core
         self.steps = [
             "Company Information",
-            "Security Configuration", 
+            "Security Configuration",
             "API Key Setup",
             "Payment Setup",
             "Final Review"
