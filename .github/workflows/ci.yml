@@ -1,4 +1,4 @@
-name: CI
+name: CI Pipeline
 
 on:
   push:
@@ -17,7 +17,8 @@ jobs:
           POSTGRES_DB: testdb
           POSTGRES_USER: testuser
           POSTGRES_PASSWORD: testpass
-        ports: ["5432:5432"]
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -28,28 +29,28 @@ jobs:
       DATABASE_URL: postgres://testuser:testpass@localhost:5432/testdb
 
     steps:
-      - name: Checkout code
+      - name: 🛎️ Checkout Code
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: 📦 Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install flake8 bandit mypy pytest
 
-      - name: Run Linter
+      - name: 🔍 Lint Code (flake8)
         run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
-      - name: Run Security Scan
+      - name: 🔐 Run Security Scan (bandit)
         run: bandit -r . -ll -ii
 
-      - name: Type Check
+      - name: 🧠 Type Check (mypy)
         run: mypy .
 
-      - name: Run Tests
-        run: pytest tests/
+      - name: 🧪 Run Tests (pytest)
+        run: pytest tests/ --maxfail=1 --disable-warnings
