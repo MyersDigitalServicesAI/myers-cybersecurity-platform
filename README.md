@@ -61,8 +61,7 @@ You don't manage infra.
 
 We host it for you. We secure it. You stay focused on growth.
 
-📩 Want access? Email support@myersdigitalservicesAI.com or visit myerscybersecurity.com
-
+📩 Want access? Email support@myersdigitalservicesAI.com or visit myersdigitalservicesAI.com
 ---
 
 ## 📢 Tell the World
