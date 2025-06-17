@@ -61,7 +61,7 @@ You don't manage infra.
 
 We host it for you. We secure it. You stay focused on growth.
 
-📩 **Want access?** Email [sales@myerscybersecurity.com](mailto:sales@myerscybersecurity.com) or visit [myerscybersecurity.com](https://myerscybersecurity.com)
+📩 Want access? Email support@myersdigitalservicesAI.com or visit myerscybersecurity.com
 
 ---
 
