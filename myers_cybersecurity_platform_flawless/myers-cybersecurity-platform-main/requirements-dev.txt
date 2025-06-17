@@ -1,0 +1,10 @@
+# requirements-dev.txt — Development Tools Only
+
+flake8==7.0.0             # Code linter to enforce style and catch bugs
+black==24.3.0             # Auto code formatter
+isort==5.13.2             # Organizes imports
+pytest==8.2.1             # Test runner for unit/integration testing
+mypy==1.10.0              # Static type checker
+
+# You can install with:
+# pip install -r requirements-dev.txt
