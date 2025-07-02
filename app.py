@@ -1,238 +1,183 @@
 import streamlit as st
 import os
-import secrets
 import logging
-import pandas as pd
-from datetime import datetime
 
-# IMPORTANT: You need to provide these module files
-from email_automation import EmailAutomation
+# Assuming these imports are correct based on your project structure
 from security_core import SecurityCore
-from payment import PaymentProcessor
-from admin_panel_module import show_admin_panel 
+from setup_wizard import SetupWizard
+# Import database utility functions
+from utils.database import init_db_pool, close_db_pool, get_db_connection, return_db_connection
 
-# --- Configure Logging ---
+# Assuming other module imports for pages
+# from signup_module import SignUpModule # If you implement this
+# from admin_panel_module import AdminPanelModule # If you implement this
+from threat_dashboard import show_threat_detection_dashboard # Assuming this is a function
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Initialize Core Services ---
-# These are initialized once and stored in session state to persist across reruns
-def initialize_services():
-    if 'services_initialized' not in st.session_state:
-        st.session_state.security_core = SecurityCore()
-        st.session_state.email_automation = EmailAutomation()
-        st.session_state.payment_processor = PaymentProcessor()
-        st.session_state.services_initialized = True
+# --- Streamlit Page Navigation (simplified) ---
+def set_page(page_name):
+    st.session_state.current_page = page_name
 
-def get_payment_processor():
-    return st.session_state.payment_processor
-
-def get_security_core():
-    return st.session_state.security_core
-
-def get_email_automation():
-    return st.session_state.email_automation
-
-# --- Page: Subscription Management ---
-def show_subscription_page():
-    st.title("Manage Your Subscription")
-    security_core = get_security_core()
-    payment_processor = get_payment_processor()
-
-    details = security_core.get_user_details(st.session_state.user_id)
-    if not details:
-        st.error("Could not load your subscription details.")
-        return
-
-    st.write(f"**Current Plan:** {details.get('plan', 'N/A').title()}")
-    st.write(f"**Payment Status:** {details.get('payment_status', 'N/A').replace('_', ' ').title()}")
-    
-    # CORRECTED: Fetch prices dynamically from Stripe
-    st.markdown("---")
-    st.subheader("Available Plans")
-    with st.spinner("Loading available plans..."):
-        prices_response = payment_processor.get_active_prices()
-
-    if prices_response.get("status") == "success":
-        active_prices = prices_response.get("prices", [])
-        if not active_prices:
-            st.info("No subscription plans are currently available.")
-        else:
-            for price in active_prices:
-                product = price.get('product', {})
-                with st.container():
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.write(f"**{product.get('name', 'Unnamed Plan')}**")
-                        st.write(f"${price.get('unit_amount', 0) / 100:.2f} / {price.get('recurring', {}).get('interval', 'month')}")
-                        st.caption(product.get('description', ''))
-                    with col2:
-                        # Add logic for subscribe/upgrade/downgrade buttons here
-                        if details.get('plan').lower() != product.get('name', '').lower():
-                             if st.button(f"Switch to {product.get('name')}", key=f"switch_{price.id}"):
-                                # Add logic to handle subscription update
-                                st.info("Subscription changes coming soon!")
-                        else:
-                            st.button("Current Plan", disabled=True)
+def render_page():
+    if st.session_state.current_page == 'setup':
+        setup_wizard = st.session_state.setup_wizard
+        setup_wizard.show_setup_wizard()
+    elif st.session_state.current_page == 'login':
+        show_login_page()
+    elif st.session_state.current_page == 'dashboard':
+        show_dashboard_page()
+    elif st.session_state.current_page == 'admin_panel':
+        show_admin_panel_page() # Placeholder
+    elif st.session_state.current_page == 'signup':
+        show_signup_page() # Placeholder
     else:
-        st.error(f"Could not load plans: {prices_response.get('error')}")
+        st.session_state.current_page = 'login' # Default to login
+        st.rerun()
 
-# --- Page: API Keys ---
-def show_api_keys_page():
-    st.title("My API Keys")
-    # This function's logic remains largely the same but uses get_security_core()
-    security_core = get_security_core()
-    user_id = st.session_state.user_id
-    # (Your existing logic for listing, creating, and managing API keys)
-    st.info("API Key management UI goes here.")
-
-
-# --- Page: Password Reset ---
-def reset_password_page():
-    st.title("Reset Your Password")
-    security_core = get_security_core()
-    
-    # CORRECTED: Use st.query_params
-    token = st.query_params.get("token")
-
-    if not token:
-        st.error("Invalid or missing password reset token.")
-        return
-
-    info = security_core.verify_password_reset_token(token)
-    if not info:
-        st.error("This password reset link is invalid or has expired.")
-        return
-        
-    st.info(f"Resetting password for: **{info['email']}**")
-    with st.form("reset_password_form"):
-        new_password = st.text_input("New Password", type="password")
-        confirm_password = st.text_input("Confirm New Password", type="password")
-        submitted = st.form_submit_button("Reset Password")
-
-        if submitted:
-            if not new_password or not confirm_password:
-                st.warning("Please fill in both password fields.")
-                return
-            if new_password != confirm_password:
-                st.error("Passwords do not match.")
-                return
-
-            is_strong, reason = security_core.validate_password_strength(new_password)
-            if not is_strong:
-                st.error(reason)
-                return
-
-            with st.spinner("Resetting your password..."):
-                if security_core.reset_user_password(info['id'], new_password):
-                    st.success("Your password has been reset successfully!")
-                    st.info("You can now log in with your new password.")
-                    # CORRECTED: Use st.query_params.clear()
-                    st.query_params.clear()
-                    st.session_state['page'] = 'login'
-                    st.rerun()
-                else:
-                    st.error("Failed to reset password. Please try again.")
-
-# --- Page: Login ---
+# --- Placeholder Pages (implement these fully) ---
 def show_login_page():
-    st.markdown("## Login to Myers Cybersecurity")
-    security_core = get_security_core()
-    email_automation = get_email_automation()
-
-    with st.form("login_form"):
-        email = st.text_input("Email Address")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-
-        if submitted:
-            auth_result, error_message = security_core.authenticate_user(email, password)
-            if auth_result:
-                st.session_state.logged_in = True
-                st.session_state.user_id = auth_result['id']
-                st.session_state.user_role = auth_result['role']
-                st.session_state.user_email = auth_result['email']
-                st.session_state.page = 'dashboard'
-                st.rerun()
-            else:
-                st.error(error_message)
+    st.title("Login to Myers Cybersecurity")
+    # Your login form and logic here
+    st.write("Login form goes here.")
+    username = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        # Example: Authenticate user
+        user = st.session_state.security_core.get_user_by_email(username)
+        if user and st.session_state.security_core.check_password(password, user['password_hash']):
+            st.session_state.authenticated = True
+            st.session_state.user_id = str(user['id'])
+            st.session_state.user_email = user['email']
+            st.session_state.user_role = user['role']
+            st.session_state.first_name = user['first_name']
+            st.session_state.last_name = user['last_name']
+            st.session_state.company_name = user['company_name']
+            st.session_state.selected_plan = user['plan']
+            st.session_state.security_core.update_user_last_login(user['id'])
+            st.success(f"Welcome, {user['first_name']}!")
+            set_page('dashboard')
+            st.rerun()
+        else:
+            st.error("Invalid email or password.")
     
     st.markdown("---")
-    if st.button("Forgot Your Password?"):
-        st.session_state.page = 'forgot_password'
+    st.write("Don't have an account?")
+    if st.button("Sign Up"):
+        set_page('signup')
         st.rerun()
 
-# --- Page: Forgot Password ---
-def forgot_password_page():
-    st.title("Forgot Your Password?")
-    security_core = get_security_core()
-    email_automation = get_email_automation()
-
-    email = st.text_input("Enter your email address")
-    if st.button("Send Reset Link"):
-        if email:
-            token = security_core.generate_password_reset_token(email)
-            if token:
-                app_url = os.environ.get("APP_URL", "http://localhost:8501")
-                reset_link = f"{app_url}/?page=reset_password&token={token}"
-                # CORRECTED: Type hint is fixed implicitly by using the instance
-                email_automation.send_password_reset_email(email, reset_link)
-            # Generic message for security
-            st.success("If an account with that email exists, a password reset link has been sent.")
-        else:
-            st.warning("Please enter an email address.")
+def show_signup_page():
+    st.title("Sign Up for Myers Cybersecurity")
+    # Your signup form and logic here
+    st.write("Signup form goes here.")
+    # This should ideally use the signup_module.py if you decide to populate it
     if st.button("Back to Login"):
-        st.session_state.page = 'login'
+        set_page('login')
         st.rerun()
 
-# --- Main App Router ---
+def show_dashboard_page():
+    st.title(f"Welcome, {st.session_state.first_name}!")
+    st.subheader("Your Cybersecurity Dashboard")
+    
+    st.write(f"Company: {st.session_state.company_name}")
+    st.write(f"Current Plan: {st.session_state.selected_plan.title()}")
+    st.write(f"User Role: {st.session_state.user_role.title()}")
+
+    st.markdown("---")
+    st.subheader("Quick Actions")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("View Threat Dashboard"):
+            set_page('threat_dashboard')
+            st.rerun()
+    with col2:
+        if st.session_state.user_role == 'admin':
+            if st.button("Admin Panel"):
+                set_page('admin_panel')
+                st.rerun()
+    with col3:
+        if st.button("Logout"):
+            logout()
+            st.rerun()
+
+    st.markdown("---")
+    # Example of integrating the threat dashboard
+    # You might want to pass security_core instance
+    show_threat_detection_dashboard(st.session_state.security_core)
+
+
+def show_admin_panel_page():
+    st.title("Admin Panel")
+    st.write("Admin functionalities will be displayed here.")
+    if st.button("Back to Dashboard"):
+        set_page('dashboard')
+        st.rerun()
+
+def logout():
+    st.session_state.authenticated = False
+    st.session_state.pop('user_id', None)
+    st.session_state.pop('user_email', None)
+    st.session_state.pop('user_role', None)
+    st.session_state.pop('first_name', None)
+    st.session_state.pop('last_name', None)
+    st.session_state.pop('company_name', None)
+    st.session_state.pop('selected_plan', None)
+    st.success("You have been logged out.")
+    set_page('login')
+
+
+def initialize_services():
+    """Initializes core services and sets up session state."""
+    if 'initialized' not in st.session_state:
+        st.session_state.initialized = False
+
+    if not st.session_state.initialized:
+        st.info("Initializing application services...")
+        try:
+            # Initialize the database connection pool FIRST
+            # This must be called before any SecurityCore or other database-dependent operations
+            init_db_pool()
+            logger.info("Database connection pool initialized successfully.")
+
+            st.session_state.security_core = SecurityCore()
+            st.session_state.setup_wizard = SetupWizard(st.session_state.security_core)
+            
+            # Check if initial setup is required
+            # A simple check: if no admin user exists, prompt for setup
+            admin_users = st.session_state.security_core.get_all_users_by_role('admin') # You might need to implement get_all_users_by_role
+            if not admin_users:
+                st.session_state.current_page = 'setup'
+            else:
+                st.session_state.current_page = 'login'
+
+            st.session_state.authenticated = False # User is not authenticated by default
+            st.session_state.initialized = True
+            logger.info("Application services initialized.")
+            st.rerun() # Rerun to display the correct initial page
+        except Exception as e:
+            logger.critical(f"Failed to initialize application services: {e}", exc_info=True)
+            st.error(f"Application failed to start: {e}. Please check server logs and environment variables (DATABASE_URL, JWT_SECRET_KEY, ENCRYPTION_KEY).")
+            # Prevent further execution if critical services fail
+            st.stop()
+
+
 def main():
-    initialize_services()
+    st.set_page_config(layout="wide", page_title="Myers Cybersecurity Platform")
 
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-    
-    if 'page' not in st.session_state:
-        # Check for query params to deep-link to password reset
-        if st.query_params.get("page") == "reset_password":
-            st.session_state.page = 'reset_password'
-        else:
-            st.session_state.page = 'login'
+    # Initialize session state variables if they don't exist
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = 'loading' # A temporary state while services initialize
 
-    if not st.session_state.logged_in:
-        if st.session_state.page == 'reset_password':
-            reset_password_page()
-        elif st.session_state.page == 'forgot_password':
-            forgot_password_page()
-        else:
-            show_login_page()
-        return
+    # Call initialization function
+    if st.session_state.current_page == 'loading':
+        initialize_services()
+    else:
+        # Render the current page based on session state
+        render_page()
 
-    # --- Logged-in Application ---
-    st.sidebar.title("Navigation")
-    st.sidebar.write(f"Welcome, {st.session_state.user_email}")
-    
-    page_options = ["Dashboard", "My Subscription", "API Keys"]
-    if st.session_state.user_role == 'admin':
-        page_options.append("Admin Panel")
-
-    page_selection = st.sidebar.radio("Go to", page_options)
-
-    if st.sidebar.button("Logout"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
-
-    if page_selection == "Dashboard":
-        st.title("Dashboard")
-        st.write("Welcome to your main dashboard.")
-    elif page_selection == "My Subscription":
-        show_subscription_page()
-    elif page_selection == "API Keys":
-        show_api_keys_page()
-    elif page_selection == "Admin Panel" and st.session_state.user_role == 'admin':
-        # CORRECTED: Abstracted DB logic into SecurityCore
-        show_admin_panel(get_security_core())
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
