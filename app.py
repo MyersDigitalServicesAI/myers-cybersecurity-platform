@@ -7,7 +7,7 @@ from datetime import datetime
 
 # IMPORTANT: You need to provide these module files
 from email_automation import EmailAutomation
-from security_core_pg import SecurityCore
+from security_core.py import SecurityCore
 from payment import PaymentProcessor
 from admin_panel_module import show_admin_panel 
 
