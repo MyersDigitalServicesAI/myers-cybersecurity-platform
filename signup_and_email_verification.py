@@ -1,29 +1,38 @@
 import os
-import smtplib
-from email.mime.text import MIMEText
-from email.utils import formataddr
 import logging
+# Removed smtplib and email.mime.text as we will use SendGrid's library
+# from email.mime.text import MIMEText
+# from email.utils import formataddr
+
+import sendgrid # New import for SendGrid API client
+from sendgrid.helpers.mail import Mail, Email, To, Content # New imports for SendGrid email construction
+
 
 logger = logging.getLogger(__name__)
 
 # --- Email Configuration (from environment variables) ---
 # Using .get() for safer environment variable access
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
-SMTP_SERVER = os.environ.get("SMTP_SERVER")
+# SMTP_SERVER and SMTP_PORT are not directly used with SendGrid API, but kept for clarity if needed elsewhere
+SMTP_SERVER = os.environ.get("SMTP_SERVER") 
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_API_KEY = os.environ.get("SMTP_API_KEY")
+SMTP_USER = os.environ.get("SMTP_USER") # Often 'apikey' for SendGrid
+SMTP_API_KEY = os.environ.get("SMTP_API_KEY") # This is the actual SendGrid API Key
 APP_URL = os.environ.get("APP_URL")
 
 class EmailAutomation:
     def __init__(self):
-        if not all([SENDER_EMAIL, SMTP_SERVER, SMTP_API_KEY, APP_URL]): # Ensure all critical env vars are set
-            logger.critical("Email sending environment variables (SENDER_EMAIL, SMTP_SERVER, SMTP_API_KEY, APP_URL) not fully set. Email functions might fail.")
-            raise ValueError("Email configuration is incomplete. Please ensure all required environment variables are set.")
+        # Ensure all critical environment variables for SendGrid are set
+        if not all([SENDER_EMAIL, SMTP_API_KEY, APP_URL]): 
+            logger.critical("Email sending environment variables (SENDER_EMAIL, SMTP_API_KEY, APP_URL) not fully set. Email functions might fail.")
+            raise ValueError("Email configuration is incomplete. Please ensure SENDER_EMAIL, SMTP_API_KEY, and APP_URL environment variables are set.")
+        
+        self.sg = sendgrid.SendGridAPIClient(SMTP_API_KEY)
+        logger.info("EmailAutomation initialized with SendGrid API client.")
 
     def _send_email(self, to_email: str, subject: str, html_content: str) -> tuple[bool, str]:
         """
-        Internal method to send an email.
+        Internal method to send an email using SendGrid API.
         Args:
             to_email (str): Recipient's email address.
             subject (str): Email subject.
@@ -35,18 +44,25 @@ class EmailAutomation:
             logger.error("Attempted to send email with no recipient email address.")
             return False, "No recipient email"
         
-        msg = MIMEText(html_content, "html")
-        msg["Subject"] = subject
-        msg["From"] = formataddr(("Myers Cybersecurity", SENDER_EMAIL))
-        msg["To"] = to_email
-
         try:
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-                server.starttls()
-                server.login(SMTP_USER, SMTP_API_KEY)
-                server.send_message(msg)
-            logger.info(f"Email sent successfully to {to_email} for subject: '{subject}'")
-            return True, ""
+            from_email = Email(SENDER_EMAIL, "Myers Cybersecurity") # Sender email and name
+            to_email_obj = To(to_email) # Recipient email
+            content = Content("text/html", html_content) # Email content type and body
+            
+            # Create the Mail object
+            message = Mail(from_email, to_email_obj, subject, content)
+            
+            # Send the email
+            response = self.sg.client.mail.send.post(request_body=message.get())
+            
+            # Check response status code
+            if response.status_code == 200 or response.status_code == 202:
+                logger.info(f"Email sent successfully to {to_email} for subject: '{subject}' (Status: {response.status_code})")
+                return True, ""
+            else:
+                error_message = f"SendGrid API Error: Status {response.status_code}, Body: {response.body}"
+                logger.error(f"Failed to send email to {to_email} (Subject: '{subject}'): {error_message}")
+                return False, error_message
         except Exception as e:
             logger.error(f"Failed to send email to {to_email} (Subject: '{subject}'): {e}", exc_info=True)
             return False, str(e)
@@ -198,4 +214,3 @@ class EmailEventHandler:
         if user_details:
             logger.info(f"Triggering welcome email for {user_details.get('email')}")
             self.email_automation.send_welcome_email(user_details)
-
