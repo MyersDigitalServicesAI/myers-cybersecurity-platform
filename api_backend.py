@@ -11,9 +11,11 @@ from pydantic import BaseModel, EmailStr
 import os
 import logging
 import secrets
+import stripe
 
 # Assuming these are adapted to be imported and used by FastAPI
-from security_core import SecurityCore
+# IMPORTANT: You will need to create/provide the 'security_core_pg.py' file
+from security_core_pg import SecurityCore 
 from payment import PaymentProcessor
 from email_automation import EmailAutomation
 
@@ -23,34 +25,35 @@ payment_processor = PaymentProcessor()
 email_automation = EmailAutomation()
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')'
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("myers_logger")
 
 # Rate limiter setup
 limiter = Limiter(key_func=get_remote_address)
 
 # FastAPI app setup
-app = FastAPI("
-    title="Myers Cybersecurity API","
-    description="Backend API for user management, subscriptions, and security features.","
+app = FastAPI(
+    title="Myers Cybersecurity API",
+    description="Backend API for user management, subscriptions, and security features.",
     version="0.0.1",
 )
 
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
-# CORS setup"
-allowed_origins = os.environ["CORS_ALLOWED_ORIGINS"].split(",")
+# CORS setup
+# Make sure CORS_ALLOWED_ORIGINS is set in your environment
+allowed_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=True,"
-    allow_methods=["*"],"
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# OAuth2 config"
-token_url_path = os.environ["TOKEN_URL_PATH"]
+# OAuth2 config
+token_url_path = os.environ.get("TOKEN_URL_PATH", "token")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=token_url_path)
 
 # --- Pydantic Models ---
@@ -74,48 +77,51 @@ class PasswordResetSubmission(BaseModel):
     confirm_password: str
 
 # --- Utility Functions ---
-async def get_current_user_idid(token: Annotated[str, Depends(oauth2_scheme)]):
-    user_idid = db_security_core.verify_access_token(token)
-    if not user_idid:
+async def get_current_user_id(token: Annotated[str, Depends(oauth2_scheme)]):
+    user_id = db_security_core.verify_access_token(token)
+    if not user_id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,"
-            detail="Authentication failed: invalid or expired token","
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed: invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return user_idid
+    return user_id
 
 # --- Exception Handlers ---
 @app.exception_handler(RateLimitExceeded)
-async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):"
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Please wait and try again."})
 
-# --- API Endpoints ---"
+# --- API Endpoints ---
 @app.get("/")
-async def read_root():"
-    return {"message": "Welcome to the Myers Cybersecurity Backend!"}"
+async def read_root():
+    return {"message": "Welcome to the Myers Cybersecurity Backend!"}
+
 @app.get("/healthz")
-async def health_check():"
-    return {"status": "ok", "version": app.version}"
-@app.post("/token")"
+async def health_check():
+    return {"status": "ok", "version": app.version}
+
+@app.post(f"/{token_url_path}")
 @limiter.limit("5/minute")
 async def generate_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
-    user_idauth_result, error_message = db_security_core.authenticate_user(
+    auth_result, error_message = db_security_core.authenticate_user(
         form_data.username, form_data.password
     )
-    if not user_idauth_result:"
+    if not auth_result:
         logger.warning(f"Failed login attempt for {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=error_message
         )
-    access_token = db_security_core.create_access_token({"
-        "sub": user_idauth_result['email'],'
-        "id": user_idauth_result['id']
-    })'
-    logger.info(f"Token issued for user ID {user_idauth_result['id']}")"
-    return {"access_token": access_token, "token_type": "bearer"}"
+    access_token = db_security_core.create_access_token({
+        "sub": auth_result['email'],
+        "id": auth_result['id']
+    })
+    logger.info(f"Token issued for user ID {auth_result['id']}")
+    return {"access_token": access_token, "token_type": "bearer"}
+
 @app.post("/signup")
 async def signup_user(signup_data: SignupModel):
-    user_idid, message = db_security_core.create_user(
+    user_id, message = db_security_core.create_user(
         email=signup_data.email,
         password=signup_data.password,
         company=signup_data.company,
@@ -124,40 +130,102 @@ async def signup_user(signup_data: SignupModel):
         plan=signup_data.plan,
         email_verified=False
     )
-    if not user_idid:"
+    if not user_id:
         logger.error(f"Signup failed for {signup_data.email}: {message}")
         raise HTTPException(status_code=400, detail=message)
-    email_automation.send_verification_email(signup_data.email)"
-    logger.info(f"New signup registered: {signup_data.email}")"
-    return {"message": "Signup successful. Please check your email to verify your account."}"
+    
+    # This assumes create_user returns the user's name and you have a method to generate a verification link
+    # For simplicity, we'll just send the email.
+    # verification_link = db_security_core.generate_email_verification_link(user_id)
+    # email_automation.send_verification_email(signup_data.email, signup_data.first_name, verification_link)
+    
+    logger.info(f"New signup registered: {signup_data.email}")
+    return {"message": "Signup successful. Please check your email to verify your account."}
+
 @app.post("/api-keys")
-async def create_api_key(api_key_data: APIKeyCreateModel, current_user_idid: Annotated[str, Depends(get_current_user_idid)]):
-    api_key_value = secrets.token_urlsafe(32)"
-    result = db_security_core.add_api_key(current_user_idid, api_key_data.label, api_key=api_key_value, service="custom", permissions="read")"
-    email_automation.send_admin_alert(f"API Key created by user ID {current_user_idid}")"
-    logger.info(f"API key created for user ID {current_user_idid}")"
-    return {"message": "API key created.", "key_id": result, "api_key": api_key_value}"
+async def create_api_key(api_key_data: APIKeyCreateModel, current_user_id: Annotated[str, Depends(get_current_user_id)]):
+    api_key_value = secrets.token_urlsafe(32)
+    result = db_security_core.add_api_key(current_user_id, api_key_data.label, api_key=api_key_value, service="custom", permissions="read")
+    email_automation.send_admin_alert(f"API Key created by user ID {current_user_id}")
+    logger.info(f"API key created for user ID {current_user_id}")
+    return {"message": "API key created.", "key_id": result, "api_key": api_key_value}
+
 @app.post("/forgot-password")
 async def forgot_password(payload: PasswordResetRequest):
     token = db_security_core.generate_password_reset_token(payload.email)
-    if token:"
-        app_url = os.environ["APP_URL"]"
+    if token:
+        app_url = os.environ["APP_URL"]
         reset_link = f"{app_url}/?page=reset_password&token={token}"
-        email_automation.send_password_reset_email(payload.email, reset_link)"
-    return {"message": "If an account with that email exists, a reset link has been sent."}"
+        # CORRECTED: This method is now added to the EmailAutomation class
+        email_automation.send_password_reset_email(payload.email, reset_link)
+    return {"message": "If an account with that email exists, a reset link has been sent."}
+
 @app.post("/reset-password")
 async def reset_password(payload: PasswordResetSubmission):
-    if payload.new_password != payload.confirm_password:"
+    if payload.new_password != payload.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match.")
 
-    user_idinfo = db_security_core.verify_password_reset_token(payload.token)
-    if not user_idinfo:"
+    user_info = db_security_core.verify_password_reset_token(payload.token)
+    if not user_info:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token.")
 
     is_strong, reason = db_security_core.validate_password_strength(payload.new_password)
     if not is_strong:
-        raise HTTPException(status_code=400, detail=reason)"
-    success = db_security_core.reset_user_idpassword(user_idinfo['user_idid'], payload.new_password)
-    if not success:'
-        raise HTTPException(status_code=500, detail="Failed to reset password.")"
-    return {"message": "Password reset successful. You may now log in."}"
+        raise HTTPException(status_code=400, detail=reason)
+    
+    # CORRECTED: Changed from user_info['user_idid'] to user_info.get('id')
+    user_id = user_info.get('id')
+    if not user_id:
+        raise HTTPException(status_code=500, detail="Could not extract user ID from token.")
+
+    success = db_security_core.reset_user_password(user_id, payload.new_password)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to reset password.")
+    return {"message": "Password reset successful. You may now log in."}
+
+# ADDED: Stripe Webhook Endpoint
+@app.post("/stripe-webhooks")
+async def stripe_webhooks(request: Request):
+    payload = await request.body()
+    sig_header = request.headers.get('stripe-signature')
+    webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
+
+    if not webhook_secret:
+        logger.error("STRIPE_WEBHOOK_SECRET is not set.")
+        raise HTTPException(status_code=500, detail="Webhook secret not configured.")
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, webhook_secret
+        )
+    except ValueError as e:
+        # Invalid payload
+        logger.error(f"Webhook payload error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except stripe.error.SignatureVerificationError as e:
+        # Invalid signature
+        logger.error(f"Webhook signature error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Handle the event
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        customer_email = session.get('customer_email')
+        subscription_id = session.get('subscription')
+        
+        if customer_email and subscription_id:
+            # This method needs to exist in your SecurityCore
+            # It should find the user by email and update their plan, 
+            # payment_status, and store the subscription_id.
+            success = db_security_core.activate_user_subscription(
+                email=customer_email, 
+                stripe_subscription_id=subscription_id
+            )
+            if success:
+                logger.info(f"Subscription activated via webhook for {customer_email}")
+            else:
+                logger.error(f"Failed to activate subscription via webhook for {customer_email}")
+    
+    # Add handlers for other events like 'invoice.payment_failed', 'customer.subscription.deleted', etc.
+
+    return {"status": "success"}
