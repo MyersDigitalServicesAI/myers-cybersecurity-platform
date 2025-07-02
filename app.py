@@ -32,6 +32,8 @@ def render_page():
         show_admin_panel_page() # Placeholder
     elif st.session_state.current_page == 'signup':
         show_signup_page() # Placeholder
+    elif st.session_state.current_page == 'threat_dashboard':
+        show_threat_detection_dashboard(st.session_state.security_core)
     else:
         st.session_state.current_page = 'login' # Default to login
         st.rerun()
@@ -105,7 +107,7 @@ def show_dashboard_page():
     st.markdown("---")
     # Example of integrating the threat dashboard
     # You might want to pass security_core instance
-    show_threat_detection_dashboard(st.session_state.security_core)
+    # show_threat_detection_dashboard(st.session_state.security_core) # This is now called via render_page() if current_page is 'threat_dashboard'
 
 
 def show_admin_panel_page():
@@ -142,11 +144,15 @@ def initialize_services():
             logger.info("Database connection pool initialized successfully.")
 
             st.session_state.security_core = SecurityCore()
+            # Now, call init_database() on the security_core instance to create tables
+            st.session_state.security_core.init_database() # THIS IS THE CRUCIAL ADDITION
+            logger.info("SecurityCore database tables ensured.")
+
             st.session_state.setup_wizard = SetupWizard(st.session_state.security_core)
             
             # Check if initial setup is required
             # A simple check: if no admin user exists, prompt for setup
-            admin_users = st.session_state.security_core.get_all_users_by_role('admin') # You might need to implement get_all_users_by_role
+            admin_users = st.session_state.security_core.get_all_users_by_role('admin')
             if not admin_users:
                 st.session_state.current_page = 'setup'
             else:
