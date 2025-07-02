@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, Tuple, List, Union
 import jwt
 
 # Import get_db_connection, return_db_connection, and close_db_pool from the utils
+# This import assumes 'utils' is a package (has __init__.py) and 'database.py' is inside it.
 from utils.database import get_db_connection, return_db_connection, close_db_pool
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -398,6 +399,31 @@ class SecurityCore:
             return None
         except Exception as e:
             logger.error(f"Unexpected error retrieving user by ID: {e}", exc_info=True)
+            return None
+        finally:
+            if conn:
+                return_db_connection(conn)
+
+    def get_user_by_stripe_customer_id(self, stripe_customer_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves user details by Stripe Customer ID."""
+        conn = None
+        cursor = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, email, role, status, stripe_subscription_id FROM users WHERE stripe_customer_id = %s;", (stripe_customer_id,))
+            user_data = cursor.fetchone()
+            if user_data:
+                columns = [desc[0] for desc in cursor.description]
+                user_dict = dict(zip(columns, user_data))
+                user_dict['id'] = str(user_dict['id'])
+                return user_dict
+            return None
+        except psycopg2.Error as e:
+            logger.error(f"Database error retrieving user by Stripe Customer ID: {e}", exc_info=True)
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving user by Stripe Customer ID: {e}", exc_info=True)
             return None
         finally:
             if conn:
