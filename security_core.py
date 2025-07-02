@@ -122,7 +122,9 @@ class SecurityCore:
                     subscription_status VARCHAR(50) DEFAULT 'unverified',
                     trial_start_date TIMESTAMP,
                     trial_end_date TIMESTAMP,
-                    auto_renewal BOOLEAN DEFAULT TRUE
+                    auto_renewal BOOLEAN DEFAULT TRUE,
+                    stripe_customer_id VARCHAR(255), -- Added for Stripe customer ID
+                    stripe_subscription_id VARCHAR(255) -- Added for Stripe subscription ID
                 );
             """)
             logger.info("Table 'users' ensured.")
@@ -183,6 +185,15 @@ class SecurityCore:
                 logger.info("Unique constraint 'unique_indicator' already exists on 'threat_intelligence'.")
             except Exception as e:
                 logger.error(f"Error adding unique constraint to threat_intelligence: {e}", exc_info=True)
+
+            # Add event_id and event_type to security_events for webhook idempotency
+            try:
+                cursor.execute("ALTER TABLE security_events ADD COLUMN IF NOT EXISTS event_id VARCHAR(255);")
+                cursor.execute("ALTER TABLE security_events ADD COLUMN IF NOT EXISTS event_source VARCHAR(100);")
+                conn.commit()
+                logger.info("Columns 'event_id' and 'event_source' ensured in 'security_events'.")
+            except Exception as e:
+                logger.error(f"Error adding event_id/event_source to security_events: {e}", exc_info=True)
 
             conn.commit()
             logger.info("Database initialization complete.")
@@ -348,7 +359,7 @@ class SecurityCore:
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT id, email, password_hash, role, status, email_verified, first_name, last_name, company_name, plan, subscription_status, trial_start_date, trial_end_date, auto_renewal FROM users WHERE email = %s;", (sanitized_email,))
+            cursor.execute("SELECT id, email, password_hash, role, status, email_verified, first_name, last_name, company_name, plan, subscription_status, trial_start_date, trial_end_date, auto_renewal, stripe_customer_id, stripe_subscription_id FROM users WHERE email = %s;", (sanitized_email,))
             user_data = cursor.fetchone()
             if user_data:
                 columns = [desc[0] for desc in cursor.description]
@@ -374,7 +385,7 @@ class SecurityCore:
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT id, email, password_hash, role, status, email_verified, first_name, last_name, company_name, plan, subscription_status, trial_start_date, trial_end_date, auto_renewal FROM users WHERE id = %s;", (user_id,))
+            cursor.execute("SELECT id, email, password_hash, role, status, email_verified, first_name, last_name, company_name, plan, subscription_status, trial_start_date, trial_end_date, auto_renewal, stripe_customer_id, stripe_subscription_id FROM users WHERE id = %s;", (user_id,))
             user_data = cursor.fetchone()
             if user_data:
                 columns = [desc[0] for desc in cursor.description]
@@ -387,6 +398,31 @@ class SecurityCore:
             return None
         except Exception as e:
             logger.error(f"Unexpected error retrieving user by ID: {e}", exc_info=True)
+            return None
+        finally:
+            if conn:
+                return_db_connection(conn)
+
+    def get_user_by_subscription_id(self, stripe_subscription_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves user details by Stripe subscription ID."""
+        conn = None
+        cursor = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, email, role, status, stripe_customer_id FROM users WHERE stripe_subscription_id = %s;", (stripe_subscription_id,))
+            user_data = cursor.fetchone()
+            if user_data:
+                columns = [desc[0] for desc in cursor.description]
+                user_dict = dict(zip(columns, user_data))
+                user_dict['id'] = str(user_dict['id'])
+                return user_dict
+            return None
+        except psycopg2.Error as e:
+            logger.error(f"Database error retrieving user by subscription ID: {e}", exc_info=True)
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving user by subscription ID: {e}", exc_info=True)
             return None
         finally:
             if conn:
@@ -639,7 +675,7 @@ class SecurityCore:
             if conn:
                 return_db_connection(conn)
 
-    def log_security_event(self, event_type: str, severity: str, description: str, user_id: Optional[str] = None, ip_address: Optional[str] = None, user_agent: Optional[str] = None):
+    def log_security_event(self, event_type: str, severity: str, description: str, user_id: Optional[str] = None, ip_address: Optional[str] = None, user_agent: Optional[str] = None, event_id: Optional[str] = None, event_source: Optional[str] = None):
         """Logs a security event to the database."""
         if severity not in {'low', 'medium', 'high', 'critical', 'info', 'warning'}:
             logger.warning(f"Invalid severity level provided: {severity}. Defaulting to 'info'.")
@@ -649,6 +685,8 @@ class SecurityCore:
         sanitized_description = self._sanitize_input(description)
         sanitized_ip_address = self._sanitize_input(ip_address) if ip_address else None
         sanitized_user_agent = self._sanitize_input(user_agent) if user_agent else None
+        sanitized_event_id = self._sanitize_input(event_id) if event_id else None
+        sanitized_event_source = self._sanitize_input(event_source) if event_source else None
 
         conn = None
         cursor = None
@@ -657,10 +695,10 @@ class SecurityCore:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO security_events (user_id, event_type, severity, description, ip_address, user_agent)
-                VALUES (%s, %s, %s, %s, %s, %s);
+                INSERT INTO security_events (user_id, event_type, severity, description, ip_address, user_agent, event_id, event_source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
                 """,
-                (user_id, sanitized_event_type, severity, sanitized_description, sanitized_ip_address, sanitized_user_agent)
+                (user_id, sanitized_event_type, severity, sanitized_description, sanitized_ip_address, sanitized_user_agent, sanitized_event_id, sanitized_event_source)
             )
             conn.commit()
             logger.info(f"Security event logged: {event_type} (Severity: {severity})")
@@ -672,6 +710,38 @@ class SecurityCore:
             if conn:
                 return_db_connection(conn)
 
+    def is_event_already_processed(self, event_id: str, event_source: str) -> bool:
+        """Checks if a webhook event has already been processed to ensure idempotency."""
+        conn = None
+        cursor = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM security_events WHERE event_id = %s AND event_source = %s LIMIT 1;",
+                (event_id, event_source)
+            )
+            return cursor.fetchone() is not None
+        except psycopg2.Error as e:
+            logger.error(f"Database error checking event idempotency for {event_id}: {e}", exc_info=True)
+            return False # Err on the side of re-processing if DB check fails
+        except Exception as e:
+            logger.error(f"Unexpected error checking event idempotency for {event_id}: {e}", exc_info=True)
+            return False
+        finally:
+            if conn:
+                return_db_connection(conn)
+
+    def mark_event_as_processed(self, event_id: str, event_source: str, event_type: str, description: str):
+        """Marks a webhook event as processed by logging it."""
+        self.log_security_event(
+            event_type=event_type,
+            severity='info',
+            description=f"Webhook event processed: {description}",
+            event_id=event_id,
+            event_source=event_source
+        )
+
     def get_security_events(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Retrieves recent security events."""
         conn = None
@@ -680,7 +750,7 @@ class SecurityCore:
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT id, user_id, event_type, severity, description, ip_address, user_agent, timestamp FROM security_events ORDER BY timestamp DESC LIMIT %s;", (limit,))
+            cursor.execute("SELECT id, user_id, event_type, severity, description, ip_address, user_agent, timestamp, event_id, event_source FROM security_events ORDER BY timestamp DESC LIMIT %s;", (limit,))
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
             for row in rows:
@@ -700,9 +770,10 @@ class SecurityCore:
             if conn:
                 return_db_connection(conn)
 
-    def update_user_subscription_status(self, user_id: str, new_status: str, is_trial: bool = False, auto_renewal: bool = True) -> bool:
+    def update_user_subscription_status(self, user_id: str, new_status: str, is_trial: bool = False, auto_renewal: bool = True, subscription_id: Optional[str] = None, trial_ends: Optional[datetime] = None, stripe_customer_id: Optional[str] = None) -> bool:
         """
         Updates a user's subscription status, including trial details if applicable.
+        Can also update Stripe customer and subscription IDs.
         """
         if new_status not in PAYMENT_STATUSES:
             logger.warning(f"Attempted to set invalid payment status: {new_status}")
@@ -718,18 +789,26 @@ class SecurityCore:
             trial_end = None
             if is_trial:
                 trial_start = datetime.utcnow()
-                trial_end = datetime.utcnow() + timedelta(days=DEFAULT_TRIAL_DAYS)
+                trial_end = trial_ends if trial_ends else (datetime.utcnow() + timedelta(days=DEFAULT_TRIAL_DAYS))
+
+            update_fields = {
+                'subscription_status': new_status,
+                'trial_start_date': trial_start,
+                'trial_end_date': trial_end,
+                'auto_renewal': auto_renewal
+            }
+            if subscription_id is not None:
+                update_fields['stripe_subscription_id'] = subscription_id
+            if stripe_customer_id is not None:
+                update_fields['stripe_customer_id'] = stripe_customer_id
+
+            set_clause = ", ".join([f"{k} = %s" for k in update_fields.keys()])
+            values = list(update_fields.values())
+            values.append(user_id)
 
             cursor.execute(
-                """
-                UPDATE users
-                SET subscription_status = %s,
-                    trial_start_date = %s,
-                    trial_end_date = %s,
-                    auto_renewal = %s
-                WHERE id = %s;
-                """,
-                (new_status, trial_start, trial_end, auto_renewal, user_id)
+                f"UPDATE users SET {set_clause} WHERE id = %s;",
+                tuple(values)
             )
             conn.commit()
             if cursor.rowcount > 0:
