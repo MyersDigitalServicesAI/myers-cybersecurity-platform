@@ -48,7 +48,7 @@ class SecurityCore:
     def __init__(self):
         """
         Initializes the SecurityCore with JWT secret, algorithm, token expiration,
-        encryption key, and database connection.
+        encryption key. Database connection is handled by external utility functions.
         """
         self.SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
         if not self.SECRET_KEY:
@@ -58,7 +58,8 @@ class SecurityCore:
         self.TOKEN_EXPIRE_MINUTES = 60
         
         self.encryption_key = self.get_or_create_encryption_key()
-        self.init_database()
+        # Removed self.init_database() from here. It should be called externally
+        # after the database connection pool has been initialized.
 
     def get_or_create_encryption_key(self):
         """
@@ -95,11 +96,12 @@ class SecurityCore:
         """
         Initializes the PostgreSQL database, creating necessary tables if they don't exist.
         This includes tables for users, API keys, security events, and threat intelligence.
+        This method should be called AFTER the database connection pool has been initialized.
         """
         conn = None
         cursor = None
         try:
-            conn = get_db_connection()
+            conn = get_db_connection() # This will now succeed if init_db_pool was called
             cursor = conn.cursor()
 
             # Create 'users' table
