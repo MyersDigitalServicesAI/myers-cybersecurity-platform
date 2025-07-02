@@ -2,18 +2,20 @@ services:
   - type: web
     name: myers-cybersecurity
     env: docker
-    repo: https://github.com/myersdigitalservicesai/myersdigitalservicesAI
+    repo: https://github.com/myersdigitalservicesai/myersdigitalservicesAI # This should be your repository
     branch: main
-    plan: free
+    plan: free # Or your desired plan
     autoDeploy: true
-    healthCheckPath: /health
+    healthCheckPath: /healthz # CORRECTED: Was /health
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: DOMAIN
-        value: https://myers-cybersecurity.onrender.com
+        value: https://myers-cybersecurity.onrender.com # This will be your app's domain
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: myers-db # Assuming you name your Render database this
+          property: connectionString
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
@@ -29,6 +31,17 @@ services:
       - key: SENDER_EMAIL
         sync: false
       - key: APP_URL
-        value: https://myers-cybersecurity.onrender.com
+        value: https://myers-cybersecurity.onrender.com # This will be your app's domain
       - key: SETUP_ADMIN_EMAIL
         sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://myers-cybersecurity.onrender.com" # Your frontend URL
+      - key: TOKEN_URL_PATH
+        value: "token" # The path for your token endpoint
+
+# Example of a database to link with the service
+databases:
+  - name: myers-db
+    databaseName: myers_cybersecurity
+    user: myers_user
+    plan: free # Or your desired plan
