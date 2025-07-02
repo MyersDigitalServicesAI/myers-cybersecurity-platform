@@ -988,6 +988,32 @@ class SecurityCore:
         """Activates a user's account."""
         return self.update_user_status(user_id, 'active')
 
+    def get_all_users_by_role(self, role: str) -> List[Dict[str, Any]]:
+        """Retrieves all users with a specific role."""
+        conn = None
+        cursor = None
+        users = []
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, email, role, status FROM users WHERE role = %s;", (role,))
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            for row in rows:
+                user_dict = dict(zip(columns, row))
+                user_dict['id'] = str(user_dict['id'])
+                users.append(user_dict)
+            return users
+        except psycopg2.Error as e:
+            logger.error(f"Database error retrieving users by role {role}: {e}", exc_info=True)
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving users by role {role}: {e}", exc_info=True)
+            return []
+        finally:
+            if conn:
+                return_db_connection(conn)
+
 # Example Usage (for testing purposes, typically removed or placed in a test file)
 if __name__ == "__main__":
     # Ensure environment variables are set for testing
