@@ -12,8 +12,13 @@ services:
     autoDeploy: true
     healthCheckPath: /healthz
     envVars:
+      # --- Service Configuration ---
       - key: ENVIRONMENT
         value: production
+      - key: TOKEN_URL_PATH
+        value: "token"
+
+      # --- Dynamic URLs (from Render) ---
       - key: DATABASE_URL
         fromDatabase:
           name: myers-cybersecurity-db
@@ -28,22 +33,41 @@ services:
           type: web
           name: myers-cybersecurity
           property: url
-      - key: TOKEN_URL_PATH
-        value: "token"
-      # --- SECRETS ---
+
+      # --- Non-Sensitive Keys ---
+      - key: STRIPE_PUBLISHABLE_KEY
+        value: pk_test_mockpublishablekey # Replace with your actual publishable key
+      - key: SMTP_SERVER
+        value: smtp.sendgrid.net
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        value: apikey
+      - key: FROM_EMAIL
+        value: support@examplecybersecurity.com
+      - key: SENDER_EMAIL
+        value: support@examplecybersecurity.com
+      - key: RATE_LIMIT_CALLS
+        value: 5
+      - key: RATE_LIMIT_PERIOD
+        value: 60
+
+      # --- SECRETS (Set in Render Environment Group) ---
       # These keys must be set in your Render Environment Group
       # and will not be synced from this file.
       - key: JWT_SECRET_KEY
         sync: false
-      - key: ENCRYPTION_KEY
+      - key: ENCRYPTION_KEY # Corresponds to FERNET_KEY
         sync: false
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
-      - key: SMTP_API_KEY
+      - key: SENDGRID_API_KEY # Corresponds to SMTP_API_KEY
         sync: false
       - key: SETUP_ADMIN_EMAIL
+        sync: false
+      - key: CAPTCHA_SECRET_KEY
         sync: false
 
 # Defines the PostgreSQL database linked to the service above
