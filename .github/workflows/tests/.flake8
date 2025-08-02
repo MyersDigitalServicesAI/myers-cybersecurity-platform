@@ -1,6 +1,17 @@
+# .flake8
+# This file contains the configuration for the Flake8 linter.
+# It helps enforce a consistent coding style and catch common errors.
+
 [flake8]
+# Set the maximum line length to 120 characters.
 max-line-length = 120
+
+# Ignore specific error codes.
+# E203: Whitespace before ':' (often conflicts with Black formatter)
+# W503: Line break before binary operator (also conflicts with Black)
 extend-ignore = E203, W503
+
+# Exclude directories and files from linting.
 exclude =
     .git,
     __pycache__,
@@ -13,4 +24,6 @@ exclude =
     .tox/,
     docs/,
     build/
+
+# Set the maximum allowed cyclomatic complexity for functions.
 max-complexity = 10
