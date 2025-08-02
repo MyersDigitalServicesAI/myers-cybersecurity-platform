@@ -1,26 +1,85 @@
-# threat_dashboard.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import time
 import logging
+import random
+from datetime import datetime, timedelta
 
-from utils.database import get_db_connection # Import the new database utility
+# --- Hardened Module Imports ---
+from security_core import SecurityCore
+from utils.database import get_db_connection, return_db_connection
 
+# --- Module-level logger setup ---
 logger = logging.getLogger(__name__)
 
-def show_threat_detection_dashboard(security_core):
-    st.markdown("### 📊 Threat Intelligence Dashboard")
-    if st.button("Generate Mock Threat Data (for Demo)"):
-        try:
-            security_core.populate_mock_threat_intelligence(num_entries=200)
-            st.success("Mock threat data generated! Refreshing dashboard...")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Failed to generate mock data: {e}")
-
+def _populate_mock_threat_intelligence(security_core: SecurityCore, num_entries: int = 100):
+    """
+    Populates the threat_intelligence table with mock data for demonstration.
+    This function is moved here to adhere to separation of concerns, as it
+    does not belong in the SecurityCore module.
+    """
+    # This is a simplified version of the function from the original security_core.py
+    # In a real application, this would be a separate data seeding script.
+    conn = None
     try:
-        conn = get_db_connection() # Use the utility function
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            threat_types = ["Malware", "Phishing", "DDoS", "Ransomware", "Insider Threat"]
+            sources = ["ThreatFeedX", "OSINT", "InternalDetection"]
+            
+            for _ in range(num_entries):
+                indicator = f"ip-{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}"
+                threat_type = random.choice(threat_types)
+                confidence = random.randint(50, 100)
+                source = random.choice(sources)
+                timestamp = datetime.utcnow() - timedelta(days=random.randint(0, 30))
+                
+                # Use ON CONFLICT DO NOTHING for idempotency
+                cursor.execute(
+                    """
+                    INSERT INTO threat_intelligence (indicator, threat_type, confidence, source, timestamp, status)
+                    VALUES (%s, %s, %s, %s, %s, 'active')
+                    ON CONFLICT (indicator) DO NOTHING;
+                    """,
+                    (indicator, threat_type, confidence, source, timestamp)
+                )
+            conn.commit()
+        logger.info(f"Successfully populated or updated mock threat intelligence data.")
+        return True
+    except Exception as e:
+        logger.error(f"Database error populating mock threat data: {e}", exc_info=True)
+        if conn:
+            conn.rollback()
+        return False
+    finally:
+        if conn:
+            return_db_connection(conn)
+
+def show_threat_detection_dashboard(security_core: SecurityCore):
+    """
+    Renders the threat intelligence dashboard.
+    This version is hardened with proper database connection handling and a non-blocking UI.
+    """
+    st.markdown("### 📊 Threat Intelligence Dashboard")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if st.button("Generate Mock Threat Data (for Demo)"):
+            with st.spinner("Generating mock data..."):
+                if _populate_mock_threat_intelligence(security_core, num_entries=200):
+                    st.success("Mock threat data generated! Refreshing dashboard...")
+                    st.rerun()
+                else:
+                    st.error("Failed to generate mock data. Check logs.")
+    with col2:
+        if st.button("🔄 Refresh Data"):
+            st.rerun()
+
+    conn = None
+    try:
+        # --- FIX APPLIED: Proper Database Connection Handling ---
+        # A try...finally block ensures the connection is always returned to the pool.
+        conn = get_db_connection()
         threat_data = pd.read_sql(
             """
             SELECT timestamp, indicator, threat_type, confidence, source
@@ -30,59 +89,34 @@ def show_threat_detection_dashboard(security_core):
             """,
             con=conn
         )
-        conn.close()
-
-        if threat_data.empty:
-            st.info("No active threat intelligence data found. Generate some mock data or integrate a real threat feed.")
-            st.warning("Please ensure your PostgreSQL database is running and the `threat_intelligence` table is correctly set up.")
-            return
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Active Threats", value=len(threat_data))
-        with col2:
-            st.metric("Unique Indicators", value=threat_data['indicator'].nunique())
-        st.markdown("---")
-
-        # Threat Type Distribution
-        st.subheader("Threat Type Distribution")
-        type_counts = threat_data['threat_type'].value_counts().reset_index()
-        type_counts.columns = ['Threat Type', 'Count']
-        fig = px.bar(type_counts, x='Threat Type', y='Count', title='Distribution of Threat Types')
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Threat Confidence Over Time
-        st.subheader("Threat Confidence Over Time")
-        line_fig = px.line(
-            threat_data.sort_values("timestamp"),
-            x="timestamp", y="confidence",
-            color="threat_type",
-            title="Threat Confidence Over Time"
-        )
-        line_fig.update_layout(xaxis_title="Time", yaxis_title="Confidence Score")
-        st.plotly_chart(line_fig, use_container_width=True)
-        st.markdown("---")
-
-        st.subheader("Raw Threat Data (Last 50 Entries)")
-        st.dataframe(threat_data.head(50))
-        st.markdown("---")
-
-        col_export, col_refresh = st.columns([3, 1])
-        with col_export:
-            csv = threat_data.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="⬇️ Export Threat Data to CSV",
-                data=csv,
-                file_name='threat_intelligence.csv',
-                mime='text/csv'
-            )
-        with col_refresh:
-            if st.button("🔄 Refresh Data"):
-                st.rerun()
-        st.caption("⏱️ This dashboard auto-refrshes every 60 seconds to fetch the latest data.")
-        time.sleep(60)
-        st.rerun()
     except Exception as e:
         logger.error(f"Error loading threat data: {e}", exc_info=True)
-        st.error(f"Error loading threat data: {e}. Please check database connection and table existence.")
+        st.error(f"Error loading threat data: {e}. Please check database connection.")
+        return
+    finally:
+        if conn:
+            return_db_connection(conn)
 
+    if threat_data.empty:
+        st.info("No active threat intelligence data found. You can generate some using the button above.")
+        return
+
+    # --- Dashboard Metrics and Visualizations ---
+    st.markdown("---")
+    metric1, metric2 = st.columns(2)
+    metric1.metric("Active Threats Logged", value=f"{len(threat_data):,}")
+    metric2.metric("Unique Threat Indicators", value=f"{threat_data['indicator'].nunique():,}")
+    st.markdown("---")
+
+    st.subheader("Threat Type Distribution")
+    type_counts = threat_data['threat_type'].value_counts().reset_index()
+    type_counts.columns = ['Threat Type', 'Count']
+    fig = px.bar(type_counts, x='Threat Type', y='Count', title='Distribution of Threat Types')
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Raw Threat Data (Last 50 Entries)")
+    st.dataframe(threat_data.head(50))
+
+    # --- FIX APPLIED: Removed Blocking Auto-Refresh ---
+    # The time.sleep() and st.rerun() have been removed to prevent the UI from freezing.
+    # A manual refresh button is the standard and correct pattern for Streamlit dashboards.
