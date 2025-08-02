@@ -1,32 +1,38 @@
-# Web Frameworks and Servers
-streamlit==1.33.0          # For interactive dashboards and UI (your frontend)
-fastapi~=0.111.0           # For building your backend RESTful APIs (recommended)
-uvicorn[standard]~=0.30.0  # ASGI server to run FastAPI applications
-# Flask                      # Alternative Python web framework (WSGI), or for specific Flask components - Commented out, remove if not actively used
-# gunicorn                   # WSGI HTTP server for deploying Flask apps, or for managing Uvicorn workers for FastAPI - Commented out, remove if not actively used
+==============================================================================
+== Production Dependencies for MyersCybersecurity Platform
+==============================================================================
+This file is auto-generated and should be used for production deployments.
+Install with: pip install -r requirements.txt
+------------------------------------------------------------------------------
+--- Web Frameworks & Server ---
+Core frameworks for the frontend dashboard and backend API
+fastapi==0.111.1
+streamlit==1.33.0
+uvicorn[standard]==0.30.6
 
-# Database and ORM
-psycopg2-binary==2.9.9     # PostgreSQL database adapter (binary distribution for easier install)
-supabase==2.1.0            # Supabase Python client library
-sqlalchemy==2.0.30         # SQL Toolkit and Object Relational Mapper
+--- Database ---
+Driver for connecting to the PostgreSQL database
+psycopg2-binary==2.9.9
 
-# Security and Authentication
-bcrypt==4.1.2              # For secure password hashing
-cryptography==42.0.5       # Cryptographic primitives (often a dependency for other security libs)
-PyJWT==2.8.0               # For JSON Web Token (JWT) implementation (added based on ModuleNotFoundError)
+--- Security & Authentication ---
+Core libraries for password hashing, encryption, JWTs, and rate limiting
+bcrypt==4.1.2
+cryptography==42.0.5
+PyJWT==2.8.0
+python-jose[cryptography]==3.3.0  # For FastAPI OAuth2 dependency
+passlib[bcrypt]==1.7.4            # For FastAPI OAuth2 dependency
+slowapi==0.1.9
 
-# Email and Communication
-email-validator==2.1.1     # For validating email addresses
-sendgrid==6.11.0           # SendGrid API client for sending emails
+--- Payments ---
+Stripe SDK for processing payments and handling webhooks
+stripe==9.7.0
 
-# HTTP Client
-requests==2.31.0           # Popular HTTP client library for making web requests
+--- Email & Validation ---
+For validating user email addresses and sending transactional emails
+email-validator==2.1.1
+sendgrid==6.11.0
 
-# Environment Variables
-python-dotenv==1.0.1       # For loading environment variables from .env files
-
-# Payments
-stripe==9.7.0              # Stripe API client for payment processing
-
-# Data Visualization
-plotly==5.21.0             # For interactive plotting and data visualization
+--- Data Handling & Utilities ---
+For data manipulation in the admin panel and environment variable loading
+pandas==2.2.2
+python-dotenv==1.0.1
