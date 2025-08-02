@@ -1,87 +1,81 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import os
 
-# Assuming api_backend.py is where your FastAPI app instance 'app' is defined
-# from api_backend import app
+# --- Hardened Module Imports ---
+# This test file assumes it can import the main 'app' instance from your API backend.
+from api_backend import app
+from security_core import SecurityCore
+from utils.database import init_db_pool, close_db_pool
 
-# For demonstration, let's create a dummy app if api_backend isn't available
-# In a real scenario, you would import your actual FastAPI app.
-from fastapi import FastAPI
-app = FastAPI()
-
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
-
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to Myers Cybersecurity API"}
-
-
-# Mock the database utility functions for isolated testing
-@pytest.fixture(autouse=True)
-def mock_db_utils():
-    with patch('security_core.get_db_connection') as mock_get_conn, \
-         patch('security_core.return_db_connection') as mock_return_conn, \
-         patch('security_core.close_db_pool') as mock_close_pool:
-        # Configure mocks to return a mock connection object
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_get_conn.return_value = mock_conn
-        yield mock_get_conn, mock_return_conn, mock_close_pool, mock_conn, mock_cursor
-
-# Mock environment variables for SecurityCore initialization
-@pytest.fixture(autouse=True)
-def mock_env_vars():
-    with patch.dict(os.environ, {
-        "JWT_SECRET_KEY": "test_jwt_secret_key_1234567890",
-        "ENCRYPTION_KEY": "test_encryption_key_abcdefghijklmnopqrstuvwxyz1234567890",
-        "DATABASE_URL": "postgresql://user:password@host:port/testdb"
-    }):
-        yield
-
-client = TestClient(app)
-
-@pytest.fixture
+# Use pytest fixtures to manage the application lifecycle for tests.
+@pytest.fixture(scope="module")
 def test_client():
-    return client
+    """
+    Creates a TestClient instance for the FastAPI app.
+    This fixture will be used by all tests in this module.
+    """
+    with TestClient(app) as client:
+        yield client
 
-def test_health_check(test_client):
-    """Test the /health endpoint."""
-    response = test_client.get("/health")
+@pytest.fixture(scope="module", autouse=True)
+def setup_and_teardown_app():
+    """
+    A fixture to manage the application's startup and shutdown events
+    (like initializing and closing the database pool) around the test suite.
+    """
+    # --- Setup ---
+    # Mock environment variables required for the app to start
+    with patch.dict(os.environ, {
+        "DATABASE_URL": "postgresql://test:test@localhost/testdb", # Mock DB URL
+        "JWT_SECRET_KEY": "test-jwt-secret",
+        "ENCRYPTION_KEY": "a_valid_fernet_key_for_testing_must_be_32_bytes_url_safe_base64=",
+        "STRIPE_SECRET_KEY": "sk_test_mock",
+        "STRIPE_WEBHOOK_SECRET": "whsec_mock"
+    }):
+        # Mock the database pool initialization so it doesn't try to connect
+        with patch("utils.database.init_db_pool") as mock_init_pool, \
+             patch("utils.database.close_db_pool") as mock_close_pool:
+            
+            # Manually trigger startup events for the TestClient
+            app.dependency_overrides = {}
+            client = TestClient(app) # Re-init client to run startup events
+            
+            yield # This is where the tests will run
+
+    # --- Teardown ---
+    # Manually trigger shutdown events
+    client.app.shutdown()
+
+
+def test_health_check(test_client: TestClient):
+    """
+    Tests the /healthz endpoint to ensure the API is running and healthy.
+    This is the most basic sanity check.
+    """
+    response = test_client.get("/healthz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json()["status"] == "ok"
 
-def test_api_root(test_client):
-    """Test the root endpoint."""
-    response = test_client.get("/")
-    # Depending on your actual root behavior (e.g., redirect to docs), status might vary.
-    # For a simple message, 200 is expected.
-    assert response.status_code == 200
-    assert response.json() == {"message": "Welcome to Myers Cybersecurity API"}
-
-
-def test_invalid_route(test_client):
-    """Test a non-existent route."""
-    response = test_client.get("/invalid-endpoint")
+def test_invalid_route(test_client: TestClient):
+    """
+    Tests that accessing a non-existent route returns a 404 Not Found error.
+    """
+    response = test_client.get("/this/route/does/not/exist")
     assert response.status_code == 404
 
-# This test now correctly imports SecurityCore after mocks are set up
-def test_security_core_initialization(mock_db_utils):
-    """Test that SecurityCore initializes correctly with mocked dependencies."""
-    from security_core import SecurityCore
-    sc = SecurityCore()
-    # Assert that init_database was called, which in turn calls get_db_connection
-    mock_db_utils[0].assert_called_once() # mock_get_conn
-    assert hasattr(sc, "init_database")
-    assert callable(sc.init_database)
-    assert hasattr(sc, "get_or_create_encryption_key")
-    assert callable(sc.get_or_create_encryption_key)
-    # You can add more specific assertions about internal state or mocked calls if needed
-
-    # Example: Test that encryption key is set (from mock_env_vars)
-    assert sc.encryption_key == os.environ["ENCRYPTION_KEY"].encode('utf-8')
+def test_security_core_instantiates_successfully():
+    """
+    Tests that the SecurityCore class can be instantiated without errors,
+    assuming the necessary environment variables are set (which they are by the fixture).
+    This is a sanity check for a critical component.
+    """
+    try:
+        sc = SecurityCore()
+        # Check that essential attributes are set from the mocked environment variables
+        assert sc.jwt_secret_key == "test-jwt-secret"
+        assert sc.encryption_key == "a_valid_fernet_key_for_testing_must_be_32_bytes_url_safe_base64="
+    except Exception as e:
+        pytest.fail(f"SecurityCore failed to instantiate: {e}")
 
