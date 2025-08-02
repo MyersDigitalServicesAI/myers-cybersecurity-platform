@@ -7,6 +7,8 @@ import os
 # This test file assumes it can import the main 'app' instance from your API backend.
 from api_backend import app
 from security_core import SecurityCore
+# The database utilities are patched, so direct import for use isn't strictly necessary
+# but it's good practice to know what's being mocked.
 from utils.database import init_db_pool, close_db_pool
 
 # Use pytest fixtures to manage the application lifecycle for tests.
@@ -15,15 +17,7 @@ def test_client():
     """
     Creates a TestClient instance for the FastAPI app.
     This fixture will be used by all tests in this module.
-    """
-    with TestClient(app) as client:
-        yield client
-
-@pytest.fixture(scope="module", autouse=True)
-def setup_and_teardown_app():
-    """
-    A fixture to manage the application's startup and shutdown events
-    (like initializing and closing the database pool) around the test suite.
+    It also handles the application startup and shutdown events.
     """
     # --- Setup ---
     # Mock environment variables required for the app to start
@@ -38,16 +32,11 @@ def setup_and_teardown_app():
         with patch("utils.database.init_db_pool") as mock_init_pool, \
              patch("utils.database.close_db_pool") as mock_close_pool:
             
-            # Manually trigger startup events for the TestClient
-            app.dependency_overrides = {}
-            client = TestClient(app) # Re-init client to run startup events
-            
-            yield # This is where the tests will run
-
-    # --- Teardown ---
-    # Manually trigger shutdown events
-    client.app.shutdown()
-
+            # The TestClient context manager handles startup and shutdown events
+            with TestClient(app) as client:
+                yield client
+    
+    # Teardown is handled automatically by the TestClient context manager
 
 def test_health_check(test_client: TestClient):
     """
@@ -71,6 +60,7 @@ def test_security_core_instantiates_successfully():
     assuming the necessary environment variables are set (which they are by the fixture).
     This is a sanity check for a critical component.
     """
+    # This test runs within the patched environment created by the test_client fixture
     try:
         sc = SecurityCore()
         # Check that essential attributes are set from the mocked environment variables
@@ -78,4 +68,3 @@ def test_security_core_instantiates_successfully():
         assert sc.encryption_key == "a_valid_fernet_key_for_testing_must_be_32_bytes_url_safe_base64="
     except Exception as e:
         pytest.fail(f"SecurityCore failed to instantiate: {e}")
-
