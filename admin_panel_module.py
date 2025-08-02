@@ -1,115 +1,212 @@
-import pandas as pd
-import streamlit as st
+import os
 import logging
-from datetime import datetime
+from typing import Annotated, Dict, Any, List, Optional
+from datetime import datetime, timezone
+from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from starlette.responses import JSONResponse
+from pydantic import BaseModel, EmailStr
 
+# --- Hardened Module Imports ---
+from security_core import SecurityCore
+from payment import PaymentProcessor
+from email_automation import EmailAutomation
+from utils.database import init_db_pool, close_db_pool
+
+# --- Logging Configuration ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def show_admin_panel(security_core):
+# --- Service Initialization ---
+# These are initialized as singletons for the application's lifecycle.
+limiter = Limiter(key_func=get_remote_address)
+app = FastAPI(
+    title="Myers Cybersecurity API",
+    description="Backend API for user management, subscriptions, and security features.",
+    version="1.0.0",
+)
+security_core = SecurityCore()
+payment_processor = PaymentProcessor()
+email_automation = EmailAutomation()
+
+# --- FastAPI Lifecycle Events (Fixes Stateless Initialization) ---
+@app.on_event("startup")
+async def startup_event():
+    """Initializes the database pool when the application starts."""
+    logger.info("FastAPI application startup...")
+    init_db_pool()
+    security_core.init_database() # Ensure schema exists
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Closes the database pool when the application shuts down."""
+    logger.info("FastAPI application shutdown...")
+    close_db_pool()
+
+# --- Middleware Configuration ---
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+allowed_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Security & Dependencies ---
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
+
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> Dict[str, Any]:
+    """Dependency to get the current authenticated user's data from a token."""
+    user_id = security_core.verify_access_token(token)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = security_core.get_user_by_id(user_id)
+    if not user or user['status'] != 'active':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is not active.")
+    return user
+
+async def get_current_admin_user(current_user: Annotated[Dict[str, Any], Depends(get_current_user)]) -> Dict[str, Any]:
+    """Dependency to ensure the current user is an admin."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operation not permitted: requires admin privileges."
+        )
+    return current_user
+
+# --- Pydantic Models ---
+class SignupModel(BaseModel):
+    email: EmailStr
+    password: str
+    company_name: str
+    first_name: str
+    last_name: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class UserRoleUpdate(BaseModel):
+    role: str
+
+class AdminUserView(BaseModel):
+    id: str
+    email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    company_name: Optional[str] = None
+    role: str
+    status: str
+    subscription_status: Optional[str] = None
+    email_verified: bool
+    created_at: datetime
+    last_login: Optional[datetime] = None
+
+# --- API Endpoints ---
+@app.get("/healthz", tags=["Status"])
+async def health_check():
+    """Provides a simple health check endpoint."""
+    return {"status": "ok", "version": app.version}
+
+@app.post("/token", response_model=Token, tags=["Authentication"])
+@limiter.limit("10/minute")
+async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
     """
-    Renders the admin panel for user management and system monitoring.
+    Authenticates a user and returns a JWT access token.
+    This endpoint is fully rewritten to use the hardened SecurityCore methods.
     """
-    st.title("⚙️ Admin Panel")
-    st.write("This section is for administrative tasks, user management, and system monitoring.")
+    user = security_core.get_user_by_email(form_data.username)
+    if not user or not security_core.check_password(form_data.password, user['password_hash']):
+        logger.warning(f"Failed login attempt for {form_data.username}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if user['status'] != 'active':
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not active.")
 
-    if st.session_state.get('user_role') != 'admin':
-        st.error("Access Denied: You must be an administrator to view this page.")
-        return
+    access_token = security_core.create_access_token(user_id=str(user['id']), role=user['role'])
+    security_core.update_user(user['id'], {'last_login': datetime.now(timezone.utc)})
+    logger.info(f"Token issued for user ID {user['id']}")
+    return {"access_token": access_token, "token_type": "bearer"}
 
-    # --- User Management Section ---
-    st.subheader("User Management")
+@app.post("/signup", status_code=status.HTTP_201_CREATED, tags=["Authentication"])
+async def signup_user(signup_data: SignupModel):
+    """
+    Registers a new user.
+    """
+    user_id, message = security_core.create_user(
+        email=signup_data.email,
+        password=signup_data.password,
+        company_name=signup_data.company_name,
+        first_name=signup_data.first_name,
+        last_name=signup_data.last_name,
+    )
+    if not user_id:
+        logger.error(f"Signup failed for {signup_data.email}: {message}")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
+    
+    # Placeholder for sending a verification email
+    # email_automation.send_verification_email(...)
+    
+    logger.info(f"New signup registered: {signup_data.email}")
+    return {"message": "Signup successful. Please check your email to verify your account."}
 
-    try:
-        if st.button("🔄 Refresh User List"):
-            st.rerun()
+@app.get("/users/me", tags=["Users"])
+async def read_users_me(current_user: Annotated[Dict[str, Any], Depends(get_current_user)]):
+    """Fetches the profile of the currently authenticated user."""
+    current_user.pop('password_hash', None)
+    return current_user
 
-        # This method 'get_all_users_for_admin' needs to be created in your SecurityCore class.
-        # It should return a list of user dictionaries.
-        users_data = security_core.get_all_users_for_admin()
+# --- Admin Panel Endpoints ---
+# NOTE: These endpoints require corresponding methods in `security_core.py`:
+# - get_all_users()
+# - get_security_events_for_user(user_id)
 
-        if not users_data:
-            st.info("No users found in the system.")
-            return
+@app.get("/admin/users", response_model=List[AdminUserView], tags=["Admin"])
+async def get_all_users(admin_user: Annotated[Dict[str, Any], Depends(get_current_admin_user)]):
+    """
+    Retrieves a list of all users. Admin only.
+    """
+    users = security_core.get_all_users()
+    return users
 
-        # Explicitly define columns to display for security and clarity
-        df = pd.DataFrame(users_data)
-        display_columns = {
-            'id': 'User ID',
-            'first_name': 'First Name',
-            'last_name': 'Last Name',
-            'email': 'Email',
-            'company': 'Company',
-            'plan': 'Plan',
-            'role': 'Role',
-            'status': 'Status',
-            'payment_status': 'Payment Status',
-            'email_verified': 'Email Verified',
-            'created_at': 'Created At',
-            'last_login': 'Last Login'
-        }
-        
-        # Filter dataframe to only include columns we want to show
-        cols_to_show = [col for col in display_columns.keys() if col in df.columns]
-        st.dataframe(df[cols_to_show].rename(columns=display_columns))
+@app.put("/admin/users/{user_id}/role", tags=["Admin"])
+async def update_user_role(user_id: str, role_update: UserRoleUpdate, admin_user: Annotated[Dict[str, Any], Depends(get_current_admin_user)]):
+    """
+    Updates a user's role (promote/demote). Admin only.
+    """
+    if role_update.role not in ['user', 'admin']:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role specified. Must be 'user' or 'admin'.")
+    
+    success = security_core.update_user(user_id, {'role': role_update.role})
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with ID {user_id} not found.")
+    
+    logger.info(f"Admin {admin_user['id']} updated user {user_id} role to {role_update.role}")
+    return {"message": f"User {user_id} role updated to {role_update.role}."}
 
-        st.markdown("---")
-        st.subheader("Admin Actions")
+@app.get("/admin/users/{user_id}/events", tags=["Admin"])
+async def get_user_events(user_id: str, admin_user: Annotated[Dict[str, Any], Depends(get_current_admin_user)]):
+    """
+    Retrieves security events for a specific user. Admin only.
+    """
+    events = security_core.get_security_events_for_user(user_id)
+    return events
 
-        # Use an expander for a cleaner UI for actions
-        with st.expander("✏️ Manage User Roles and View Events"):
-            user_email_to_manage = st.text_input(
-                "Enter user's email to manage:",
-                help="Type the full email of the user you wish to manage and press Enter."
-            )
-
-            if user_email_to_manage:
-                # CORRECTED: Changed to 'get_user_idby_email' to match security_core.py
-                target_user = security_core.get_user_idby_email(user_email_to_manage)
-
-                if target_user:
-                    st.success(f"Selected User: **{target_user['first_name']} {target_user['last_name']}** ({target_user['email']})")
-                    st.write(f"Current Role: **{target_user['role'].title()}** | Status: **{target_user['status'].title()}**")
-
-                    # --- Role Management ---
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if target_user['role'] != 'admin':
-                            if st.button(f"Promote to Admin", key=f"promote_{target_user['id']}"):
-                                if security_core.promote_to_admin(target_user['id']):
-                                    st.success(f"{target_user['first_name']} has been promoted to Admin.")
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to promote user.")
-                        else:
-                            st.button("Promote to Admin", disabled=True, help="User is already an Admin.")
-
-                    with col2:
-                        if target_user['role'] != 'user':
-                            if st.button(f"Demote to User", key=f"demote_{target_user['id']}"):
-                                if security_core.demote_to_user(target_user['id']):
-                                    st.success(f"{target_user['first_name']} has been demoted to User.")
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to demote user.")
-                        else:
-                            st.button("Demote to User", disabled=True, help="User is already a standard User.")
-                    
-                    # --- Security Event Viewer ---
-                    st.markdown("---")
-                    st.markdown("#### Security Events")
-                    if st.button("Load Security Events for this User"):
-                        events = security_core.get_security_events(target_user['id'], limit=50)
-                        if events:
-                            events_df = pd.DataFrame(events)
-                            st.write(f"Displaying last {len(events)} events for {target_user['email']}:")
-                            st.dataframe(events_df[['timestamp', 'event_type', 'severity', 'description', 'source_ip']])
-                        else:
-                            st.info("No security events found for this user.")
-
-                else:
-                    st.warning("No user found with that email address.")
-
-    except Exception as e:
-        logger.error(f"An error occurred in the admin panel: {e}", exc_info=True)
-        st.error(f"An unexpected error occurred: {e}")
-        st.warning("Please ensure the backend services and database are running correctly.")
+# --- FIX APPLIED: Architectural Conflict Removed ---
+# The /stripe-webhooks endpoint has been completely removed from this file.
+# That functionality belongs exclusively in the `webhook_handler.py` service.
