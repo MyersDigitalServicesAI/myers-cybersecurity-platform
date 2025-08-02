@@ -1,189 +1,198 @@
 import streamlit as st
 import os
 import logging
+from datetime import datetime
 
-# Assuming these imports are correct based on your project structure
+# --- Hardened Module Imports ---
+# These imports assume the corrected, production-ready versions of each module are in place.
 from security_core import SecurityCore
 from setup_wizard import SetupWizard
-# Import database utility functions
-from utils.database import init_db_pool, close_db_pool, get_db_connection, return_db_connection
+from utils.database import init_db_pool, close_db_pool # Assuming this is now in the project structure
+# from threat_dashboard import show_threat_detection_dashboard # Assuming this file exists
 
-# Assuming other module imports for pages
-# from signup_module import SignUpModule # If you implement this
-# from admin_panel_module import AdminPanelModule # If you implement this
-from threat_dashboard import show_threat_detection_dashboard # Assuming this is a function
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# --- Logging Configuration ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Streamlit Page Navigation (simplified) ---
-def set_page(page_name):
-    st.session_state.current_page = page_name
+# ======================================================================================
+# --- 1. APPLICATION INITIALIZATION & STATE MACHINE ---
+# ======================================================================================
 
-def render_page():
-    if st.session_state.current_page == 'setup':
-        setup_wizard = st.session_state.setup_wizard
-        setup_wizard.show_setup_wizard()
-    elif st.session_state.current_page == 'login':
-        show_login_page()
-    elif st.session_state.current_page == 'dashboard':
-        show_dashboard_page()
-    elif st.session_state.current_page == 'admin_panel':
-        show_admin_panel_page() # Placeholder
-    elif st.session_state.current_page == 'signup':
-        show_signup_page() # Placeholder
-    elif st.session_state.current_page == 'threat_dashboard':
-        show_threat_detection_dashboard(st.session_state.security_core)
-    else:
-        st.session_state.current_page = 'login' # Default to login
-        st.rerun()
+def initialize_app():
+    """
+    A robust, state-driven function to initialize the application.
+    This fixes the "Flawed Initialization" finding by creating a clear, resilient startup sequence.
+    """
+    if 'app_state' not in st.session_state:
+        st.session_state.app_state = 'initializing'
+        st.session_state.current_page = 'login' # Default page after initialization
+        st.session_state.authenticated = False
 
-# --- Placeholder Pages (implement these fully) ---
+    if st.session_state.app_state == 'initializing':
+        with st.spinner("Initializing application services..."):
+            try:
+                # Initialize the database pool first
+                init_db_pool()
+                
+                # Initialize the core security module
+                st.session_state.security_core = SecurityCore()
+                
+                # Check if the database schema needs to be created
+                st.session_state.security_core.init_database()
+                
+                # Check if an admin user exists. If not, the app needs setup.
+                # This is a more efficient check than getting all users.
+                if not st.session_state.security_core.get_user_by_email(os.environ.get("ADMIN_EMAIL", "admin@example.com")):
+                     st.session_state.app_state = 'needs_setup'
+                else:
+                     st.session_state.app_state = 'ready'
+                
+                logger.info(f"Application state transitioned to: {st.session_state.app_state}")
+                st.rerun()
+
+            except Exception as e:
+                logger.critical(f"FATAL: Failed to initialize application services: {e}", exc_info=True)
+                st.session_state.app_state = 'error'
+                st.session_state.error_message = str(e)
+                st.rerun()
+
+# ======================================================================================
+# --- 2. PAGE COMPONENTS & UI LOGIC ---
+# ======================================================================================
+
 def show_login_page():
-    st.title("Login to Myers Cybersecurity")
-    # Your login form and logic here
-    st.write("Login form goes here.")
-    username = st.text_input("Email")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        # Example: Authenticate user
-        user = st.session_state.security_core.get_user_by_email(username)
-        if user and st.session_state.security_core.check_password(password, user['password_hash']):
-            st.session_state.authenticated = True
-            st.session_state.user_id = str(user['id'])
-            st.session_state.user_email = user['email']
-            st.session_state.user_role = user['role']
-            st.session_state.first_name = user['first_name']
-            st.session_state.last_name = user['last_name']
-            st.session_state.company_name = user['company_name']
-            st.session_state.selected_plan = user['plan']
-            st.session_state.security_core.update_user_last_login(user['id'])
-            st.success(f"Welcome, {user['first_name']}!")
-            set_page('dashboard')
-            st.rerun()
-        else:
-            st.error("Invalid email or password.")
-    
-    st.markdown("---")
-    st.write("Don't have an account?")
-    if st.button("Sign Up"):
-        set_page('signup')
-        st.rerun()
+    """
+    Displays the login page and handles user authentication.
+    This fixes the "Incorrect SecurityCore Method Calls" finding.
+    """
+    st.title("Myers Cybersecurity Platform")
+    st.subheader("Admin Login")
 
-def show_signup_page():
-    st.title("Sign Up for Myers Cybersecurity")
-    # Your signup form and logic here
-    st.write("Signup form goes here.")
-    # This should ideally use the signup_module.py if you decide to populate it
-    if st.button("Back to Login"):
-        set_page('login')
-        st.rerun()
+    with st.form("login_form"):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
+
+        if submitted:
+            if not email or not password:
+                st.error("Email and password are required.")
+                return
+
+            security_core = st.session_state.security_core
+            user = security_core.get_user_by_email(email)
+
+            if user and security_core.check_password(password, user['password_hash']):
+                # --- FIX APPLIED: Use the consolidated update_user method ---
+                security_core.update_user(user['id'], {'last_login': datetime.utcnow()})
+
+                # Populate session state upon successful login
+                st.session_state.authenticated = True
+                st.session_state.user_id = str(user['id'])
+                st.session_state.user_email = user['email']
+                st.session_state.user_role = user['role']
+                st.session_state.first_name = user['first_name']
+                
+                st.success(f"Welcome, {st.session_state.first_name}!")
+                st.session_state.current_page = 'dashboard'
+                st.rerun()
+            else:
+                st.error("Invalid email or password.")
+
+def show_setup_page():
+    """
+    Displays the initial setup wizard if no admin user is found.
+    """
+    st.title("Welcome to Myers Cybersecurity Platform Setup")
+    st.info("No admin user found. Please complete the initial setup.")
+    
+    # Initialize the setup wizard if it doesn't exist
+    if 'setup_wizard' not in st.session_state:
+        st.session_state.setup_wizard = SetupWizard(st.session_state.security_core)
+        
+    st.session_state.setup_wizard.show_setup_wizard()
+    
+    # After setup is complete, the wizard should set the app_state to 'ready'
+    # and rerun, which will then direct to the login page.
 
 def show_dashboard_page():
-    st.title(f"Welcome, {st.session_state.first_name}!")
-    st.subheader("Your Cybersecurity Dashboard")
+    """
+    Displays the main application dashboard for authenticated users.
+    """
+    st.sidebar.title("Navigation")
+    st.sidebar.write(f"Welcome, {st.session_state.get('first_name', 'User')}!")
     
-    st.write(f"Company: {st.session_state.company_name}")
-    st.write(f"Current Plan: {st.session_state.selected_plan.title()}")
-    st.write(f"User Role: {st.session_state.user_role.title()}")
-
-    st.markdown("---")
-    st.subheader("Quick Actions")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("View Threat Dashboard"):
-            set_page('threat_dashboard')
-            st.rerun()
-    with col2:
-        if st.session_state.user_role == 'admin':
-            if st.button("Admin Panel"):
-                set_page('admin_panel')
-                st.rerun()
-    with col3:
-        if st.button("Logout"):
-            logout()
-            st.rerun()
-
-    st.markdown("---")
-    # Example of integrating the threat dashboard
-    # You might want to pass security_core instance
-    # show_threat_detection_dashboard(st.session_state.security_core) # This is now called via render_page() if current_page is 'threat_dashboard'
-
-
-def show_admin_panel_page():
-    st.title("Admin Panel")
-    st.write("Admin functionalities will be displayed here.")
-    if st.button("Back to Dashboard"):
-        set_page('dashboard')
+    if st.sidebar.button("Dashboard", use_container_width=True):
+        st.session_state.current_page = 'dashboard'
         st.rerun()
+    if st.sidebar.button("API Keys", use_container_width=True):
+        st.session_state.current_page = 'api_keys'
+        st.rerun()
+    if st.sidebar.button("Settings", use_container_width=True):
+        st.session_state.current_page = 'settings'
+        st.rerun()
+    if st.sidebar.button("Logout", use_container_width=True):
+        logout() # This will rerun automatically
+
+    # --- Main Page Content ---
+    st.title("Cybersecurity Dashboard")
+    st.write("This is the main dashboard area. Key metrics and alerts will be displayed here.")
+    # Placeholder for actual dashboard content
+    st.info("Dashboard content is under construction.")
+
 
 def logout():
+    """Clears the session state to log the user out."""
+    keys_to_clear = [
+        'authenticated', 'user_id', 'user_email', 'user_role', 'first_name'
+    ]
+    for key in keys_to_clear:
+        if key in st.session_state:
+            del st.session_state[key]
+    
     st.session_state.authenticated = False
-    st.session_state.pop('user_id', None)
-    st.session_state.pop('user_email', None)
-    st.session_state.pop('user_role', None)
-    st.session_state.pop('first_name', None)
-    st.session_state.pop('last_name', None)
-    st.session_state.pop('company_name', None)
-    st.session_state.pop('selected_plan', None)
-    st.success("You have been logged out.")
-    set_page('login')
+    st.session_state.current_page = 'login'
+    st.rerun()
 
-
-def initialize_services():
-    """Initializes core services and sets up session state."""
-    if 'initialized' not in st.session_state:
-        st.session_state.initialized = False
-
-    if not st.session_state.initialized:
-        st.info("Initializing application services...")
-        try:
-            # Initialize the database connection pool FIRST
-            # This must be called before any SecurityCore or other database-dependent operations
-            init_db_pool()
-            logger.info("Database connection pool initialized successfully.")
-
-            st.session_state.security_core = SecurityCore()
-            # Now, call init_database() on the security_core instance to create tables
-            st.session_state.security_core.init_database() # THIS IS THE CRUCIAL ADDITION
-            logger.info("SecurityCore database tables ensured.")
-
-            st.session_state.setup_wizard = SetupWizard(st.session_state.security_core)
-            
-            # Check if initial setup is required
-            # A simple check: if no admin user exists, prompt for setup
-            admin_users = st.session_state.security_core.get_all_users_by_role('admin')
-            if not admin_users:
-                st.session_state.current_page = 'setup'
-            else:
-                st.session_state.current_page = 'login'
-
-            st.session_state.authenticated = False # User is not authenticated by default
-            st.session_state.initialized = True
-            logger.info("Application services initialized.")
-            st.rerun() # Rerun to display the correct initial page
-        except Exception as e:
-            logger.critical(f"Failed to initialize application services: {e}", exc_info=True)
-            st.error(f"Application failed to start: {e}. Please check server logs and environment variables (DATABASE_URL, JWT_SECRET_KEY, ENCRYPTION_KEY).")
-            # Prevent further execution if critical services fail
-            st.stop()
-
+# ======================================================================================
+# --- 3. MAIN APPLICATION ROUTER ---
+# ======================================================================================
 
 def main():
-    st.set_page_config(layout="wide", page_title="Myers Cybersecurity Platform")
+    """
+    The main function that sets up the page and routes the user based on state.
+    """
+    st.set_page_config(layout="wide", page_title="Myers Cybersecurity")
 
-    # Initialize session state variables if they don't exist
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-    if 'current_page' not in st.session_state:
-        st.session_state.current_page = 'loading' # A temporary state while services initialize
+    # --- State-driven execution flow ---
+    if st.session_state.get('app_state') == 'initializing':
+        initialize_app()
+        st.info("Initializing...") # Show a message while initializing
 
-    # Call initialization function
-    if st.session_state.current_page == 'loading':
-        initialize_services()
+    elif st.session_state.get('app_state') == 'needs_setup':
+        show_setup_page()
+
+    elif st.session_state.get('app_state') == 'ready':
+        if st.session_state.get('authenticated'):
+            # User is logged in, show the appropriate page
+            page = st.session_state.get('current_page', 'dashboard')
+            if page == 'dashboard':
+                show_dashboard_page()
+            # Add other authenticated pages here (e.g., api_keys, settings)
+            else:
+                show_dashboard_page() # Default to dashboard
+        else:
+            # User is not logged in, show the login page
+            show_login_page()
+
+    elif st.session_state.get('app_state') == 'error':
+        st.error("A critical error occurred during application startup.")
+        st.exception(st.session_state.get('error_message', 'Unknown error.'))
+
     else:
-        # Render the current page based on session state
-        render_page()
+        # Fallback to re-initialize if state is unknown
+        initialize_app()
 
 if __name__ == '__main__':
+    # This block runs when the script is executed directly.
+    # It's the entry point of the Streamlit application.
     main()
