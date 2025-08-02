@@ -1,333 +1,170 @@
 import streamlit as st
-import secrets
+import os
+import logging
 from datetime import datetime
-from security_core import SecurityCore # Ensure this import is correct
-from payment import PaymentProcessor # Ensure this import is correct
+
+# --- Hardened Module Imports ---
+from security_core import SecurityCore
+from payment import PaymentProcessor
+
+# --- Module-level logger setup ---
+logger = logging.getLogger(__name__)
 
 class SetupWizard:
-    def __init__(self, security_core):
+    """
+    Manages the multi-step process for the initial application setup by the first admin user.
+    This class is instantiated once and stored in the Streamlit session state.
+    """
+    def __init__(self, security_core: SecurityCore):
         self.security_core = security_core
-        # PaymentProcessor can be initialized here if needed for fetching plans,
-        # but actual checkout session creation might be handled elsewhere or in a later step.
-        self.payment_processor = PaymentProcessor() 
+        self.payment_processor = PaymentProcessor()
         self.steps = [
+            "Admin Account",
             "Company Information",
-            "Security Configuration",
-            "API Key Setup",
-            "Payment Setup",
             "Final Review"
         ]
-    
-    def show_setup_wizard(self):
-        """Display the setup wizard interface"""
+        # Initialize session state for the wizard
         if 'setup_step' not in st.session_state:
             st.session_state.setup_step = 0
-        
-        # Progress indicator
-        progress = (st.session_state.setup_step + 1) / len(self.steps)
-        st.progress(progress)
-        
-        current_step = self.steps[st.session_state.setup_step]
-        st.markdown(f"## Setup Wizard - Step {st.session_state.setup_step + 1}: {current_step}")
-        
-        # Step content
-        if st.session_state.setup_step == 0:
-            self.company_information_step()
-        elif st.session_state.setup_step == 1:
-            self.security_configuration_step()
-        elif st.session_state.setup_step == 2:
-            self.api_key_setup_step()
-        elif st.session_state.setup_step == 3:
-            self.payment_setup_step()
-        elif st.session_state.setup_step == 4:
-            self.final_review_step()
-    
-    def company_information_step(self):
-        """Step 1: Collect company and admin information."""
-        st.subheader("Tell us about your company and yourself.")
-        
-        # Initialize setup_data in session_state if not present
         if 'setup_data' not in st.session_state:
             st.session_state.setup_data = {}
 
-        with st.form("company_info_form"):
-            st.session_state.setup_data['company_name'] = st.text_input("Company Name", value=st.session_state.setup_data.get('company_name', ''))
-            st.session_state.setup_data['admin_first_name'] = st.text_input("Admin First Name", value=st.session_state.setup_data.get('admin_first_name', ''))
-            st.session_state.setup_data['admin_last_name'] = st.text_input("Admin Last Name", value=st.session_state.setup_data.get('admin_last_name', ''))
-            st.session_state.setup_data['admin_email'] = st.text_input("Admin Email", value=st.session_state.setup_data.get('admin_email', ''))
-            
-            submitted = st.form_submit_button("Next")
-            if submitted:
-                if not st.session_state.setup_data['company_name']:
-                    st.error("Company Name is required.")
-                elif not st.session_state.setup_data['admin_first_name']:
-                    st.error("Admin First Name is required.")
-                elif not st.session_state.setup_data['admin_email']:
-                    st.error("Admin Email is required.")
-                elif not self.security_core.validate_email_input(st.session_state.setup_data['admin_email']):
-                    st.error("Invalid Admin Email format.")
-                else:
-                    st.session_state.setup_step += 1
-                    st.rerun()
+    def show(self):
+        """Renders the current step of the setup wizard."""
+        st.title("Myers Cybersecurity Platform Setup")
+        
+        # Progress indicator
+        progress_value = (st.session_state.setup_step) / (len(self.steps) - 1)
+        st.progress(progress_value)
+        
+        current_step_name = self.steps[st.session_state.setup_step]
+        st.markdown(f"#### Step {st.session_state.setup_step + 1}: {current_step_name}")
 
-    def security_configuration_step(self):
-        """Step 2: Set up admin password and security preferences."""
-        st.subheader("Set up your Admin Account Security.")
+        # --- Step rendering logic ---
+        if st.session_state.setup_step == 0:
+            self._render_admin_account_step()
+        elif st.session_state.setup_step == 1:
+            self._render_company_info_step()
+        elif st.session_state.setup_step == 2:
+            self._render_final_review_step()
 
-        with st.form("security_config_form"):
-            admin_password = st.text_input("Admin Password", type="password")
+    def _render_admin_account_step(self):
+        """Step 1: Create the primary admin account."""
+        st.subheader("Create Your Administrator Account")
+        
+        # Use the SETUP_ADMIN_EMAIL from environment as the default, non-editable email
+        admin_email = os.environ.get("SETUP_ADMIN_EMAIL", "admin@example.com")
+        st.info(f"The primary admin account will be created for: **{admin_email}**")
+        st.session_state.setup_data['email'] = admin_email
+
+        with st.form("admin_account_form"):
+            st.session_state.setup_data['first_name'] = st.text_input("First Name", value=st.session_state.setup_data.get('first_name', ''))
+            st.session_state.setup_data['last_name'] = st.text_input("Last Name", value=st.session_state.setup_data.get('last_name', ''))
+            password = st.text_input("Password", type="password")
             confirm_password = st.text_input("Confirm Password", type="password")
             
-            # Placeholder for security preferences (e.g., MFA, logging levels)
-            st.markdown("---")
-            st.write("Optional Security Preferences (can be configured later):")
-            st.checkbox("Enable Multi-Factor Authentication (MFA) for Admin", value=False, disabled=True)
-            st.selectbox("Default Logging Level", ["INFO", "WARNING", "ERROR", "CRITICAL"], index=0)
-
-            submitted = st.form_submit_button("Next")
+            submitted = st.form_submit_button("Next: Company Information")
             if submitted:
-                if not admin_password or not confirm_password:
-                    st.error("Admin Password and Confirm Password are required.")
-                elif admin_password != confirm_password:
+                is_strong, msg = self.security_core.validate_password_strength(password)
+                if not all([st.session_state.setup_data['first_name'], password, confirm_password]):
+                    st.error("All fields are required.")
+                elif password != confirm_password:
                     st.error("Passwords do not match.")
+                elif not is_strong:
+                    st.error(msg)
                 else:
-                    is_strong, msg = self.security_core.validate_password_strength(admin_password)
-                    if not is_strong:
-                        st.error(msg)
-                    else:
-                        st.session_state.setup_data['admin_password'] = admin_password
-                        st.session_state.setup_step += 1
-                        st.rerun()
+                    st.session_state.setup_data['password'] = password
+                    st.session_state.setup_step += 1
+                    st.rerun()
 
-    def api_key_setup_step(self):
-        """Step 3: Generate initial API key."""
-        st.subheader("Generate your first API Key.")
-        st.info("This API key will be used to integrate with your systems. You can generate more later.")
-
-        if 'initial_api_key' not in st.session_state.setup_data:
-            st.session_state.setup_data['initial_api_key'] = ""
-            st.session_state.setup_data['initial_api_key_name'] = "Default Admin Key"
-            st.session_state.setup_data['initial_api_key_permissions'] = ["read", "write"]
-
-        with st.form("api_key_form"):
-            st.session_state.setup_data['initial_api_key_name'] = st.text_input(
-                "API Key Name", 
-                value=st.session_state.setup_data.get('initial_api_key_name', "Default Admin Key")
-            )
-            # Multi-select for permissions
-            available_permissions = ["read", "write", "admin"]
-            st.session_state.setup_data['initial_api_key_permissions'] = st.multiselect(
-                "API Key Permissions",
-                options=available_permissions,
-                default=st.session_state.setup_data.get('initial_api_key_permissions', ["read", "write"])
-            )
+    def _render_company_info_step(self):
+        """Step 2: Collect company information."""
+        st.subheader("Tell Us About Your Company")
+        with st.form("company_info_form"):
+            st.session_state.setup_data['company_name'] = st.text_input("Company Name", value=st.session_state.setup_data.get('company_name', ''))
             
-            submitted = st.form_submit_button("Generate Key & Next")
+            submitted = st.form_submit_button("Next: Final Review")
             if submitted:
-                if not st.session_state.setup_data['initial_api_key_name']:
-                    st.error("API Key Name is required.")
-                elif not st.session_state.setup_data['initial_api_key_permissions']:
-                    st.error("At least one permission must be selected for the API key.")
+                if not st.session_state.setup_data['company_name']:
+                    st.error("Company name is required.")
                 else:
-                    # Key generation will happen in final_review_step after user is created
                     st.session_state.setup_step += 1
                     st.rerun()
 
-    def payment_setup_step(self):
-        """Step 4: Select subscription plan."""
-        st.subheader("Choose your Subscription Plan.")
-        st.info("You can choose a plan now, or start with a trial if eligible. Payment details will be handled via Stripe.")
+    def _render_final_review_step(self):
+        """Step 3: Review all information and complete the setup."""
+        st.subheader("Review and Complete Setup")
+        data = st.session_state.setup_data
 
-        # Fetch active prices from Stripe
-        prices_response = self.payment_processor.get_active_prices()
-        if prices_response.get("status") == "success":
-            prices = prices_response.get("prices", [])
-            if not prices:
-                st.warning("No active subscription plans found. Please configure plans in Stripe.")
-                st.session_state.setup_data['selected_plan'] = None
-                st.session_state.setup_data['selected_price_id'] = None
-                plan_options = ["No Plans Available"]
-                plan_display_map = {}
-            else:
-                plan_options = []
-                plan_display_map = {}
-                for price in prices:
-                    product_name = price.product.name
-                    interval = price.recurring.interval
-                    unit_amount = price.unit_amount / 100 # Convert cents to dollars
-                    display_name = f"{product_name} - ${unit_amount:.2f}/{interval}"
-                    plan_options.append(display_name)
-                    plan_display_map[display_name] = price.id # Store Stripe Price ID
+        st.markdown("**Admin Account:**")
+        st.write(f"- **Name:** {data.get('first_name')} {data.get('last_name')}")
+        st.write(f"- **Email:** {data.get('email')}")
+        st.write(f"- **Password:** {'*' * 10}")
 
-                # Add a "Start Trial" option if applicable and not already selected
-                if "Start Trial (if eligible)" not in plan_options:
-                    plan_options.insert(0, "Start Trial (if eligible)")
-        else:
-            st.error(f"Failed to retrieve subscription plans: {prices_response.get('error', 'Unknown error')}")
-            st.warning("Proceeding without plan selection. Please configure Stripe and refresh.")
-            plan_options = ["No Plans Available"]
-            plan_display_map = {}
+        st.markdown("**Company Information:**")
+        st.write(f"- **Company Name:** {data.get('company_name')}")
+        
+        st.markdown("---")
+        if st.button("Complete Setup", type="primary"):
+            self._execute_setup()
 
-
-        with st.form("payment_setup_form"):
-            selected_plan_display = st.selectbox(
-                "Select a Plan or Start Trial",
-                options=plan_options,
-                index=0 # Default to "Start Trial" or first available plan
+    def _execute_setup(self):
+        """
+        Executes the final setup process by calling the SecurityCore module.
+        This is the rewritten, hardened version of the complete_setup logic.
+        """
+        with st.spinner("Finalizing setup... This may take a moment."):
+            data = st.session_state.setup_data
+            
+            # --- FIX APPLIED: Use correct SecurityCore method signature ---
+            user_id, message = self.security_core.create_user(
+                email=data['email'],
+                password=data['password'],
+                first_name=data['first_name'],
+                last_name=data['last_name'],
+                company_name=data['company_name'],
+                role='admin' # Explicitly set the role to admin
             )
 
-            if selected_plan_display == "Start Trial (if eligible)":
-                st.session_state.setup_data['selected_plan'] = "trial"
-                st.session_state.setup_data['selected_price_id'] = None
-                st.session_state.setup_data['is_trial_eligible'] = True
-            elif selected_plan_display in plan_display_map:
-                st.session_state.setup_data['selected_plan'] = selected_plan_display.split(" - ")[0].lower() # Extract plan name
-                st.session_state.setup_data['selected_price_id'] = plan_display_map[selected_plan_display]
-                st.session_state.setup_data['is_trial_eligible'] = False
+            if not user_id:
+                st.error(f"Setup failed during user creation: {message}")
+                return
+
+            # --- FIX APPLIED: Use consolidated update_user method ---
+            # Mark the admin's email as verified and set the account to active.
+            update_payload = {
+                'email_verified': True,
+                'status': 'active'
+            }
+            update_success = self.security_core.update_user(user_id, update_payload)
+
+            if not update_success:
+                st.error("Setup failed: Could not activate the new admin account.")
+                # In a real scenario, you might want to roll back the user creation here.
+                return
+            
+            # --- FIX APPLIED: Use correct API key creation method ---
+            # Create a default API key for the new admin.
+            api_key, key_message = self.security_core.create_api_key(
+                user_id=user_id,
+                name="Default Admin Key",
+                permissions=["admin"] # Grant full admin permissions
+            )
+
+            if not api_key:
+                st.warning(f"Admin user was created, but failed to generate an initial API key: {key_message}")
             else:
-                st.session_state.setup_data['selected_plan'] = None
-                st.session_state.setup_data['selected_price_id'] = None
-                st.session_state.setup_data['is_trial_eligible'] = False
+                st.markdown(f"**Your Initial Admin API Key (save this now, it will not be shown again):**")
+                st.code(api_key)
 
-            submitted = st.form_submit_button("Next")
-            if submitted:
-                if st.session_state.setup_data['selected_plan'] is None and "No Plans Available" not in plan_options:
-                     st.error("Please select a plan or trial option.")
-                else:
-                    st.session_state.setup_step += 1
-                    st.rerun()
-
-    def final_review_step(self):
-        """Step 5: Review all information and complete setup."""
-        st.subheader("Final Review.")
-        st.info("Please review all the details before completing the setup. This will create your admin account and initial API key.")
-
-        setup_data = st.session_state.setup_data
-
-        st.markdown("### Company Information")
-        st.write(f"**Company Name:** {setup_data.get('company_name')}")
-        st.write(f"**Admin Name:** {setup_data.get('admin_first_name')} {setup_data.get('admin_last_name')}")
-        st.write(f"**Admin Email:** {setup_data.get('admin_email')}")
-
-        st.markdown("### Security Configuration")
-        st.write(f"**Admin Password Set:** {'Yes' if setup_data.get('admin_password') else 'No'}")
-
-        st.markdown("### API Key Setup")
-        st.write(f"**Initial API Key Name:** {setup_data.get('initial_api_key_name')}")
-        st.write(f"**Initial API Key Permissions:** {', '.join(setup_data.get('initial_api_key_permissions', []))}")
-
-        st.markdown("### Payment Setup")
-        st.write(f"**Selected Plan:** {setup_data.get('selected_plan').title() if setup_data.get('selected_plan') else 'Not Selected'}")
-        if setup_data.get('selected_plan') == 'trial':
-            st.write("**Trial Eligible:** Yes")
-        elif setup_data.get('selected_price_id'):
-            st.write(f"**Stripe Price ID:** {setup_data.get('selected_price_id')}")
-
-        st.markdown("---")
-
-        if st.button("Complete Setup"):
-            self.complete_setup(setup_data)
-
-     def complete_setup(self, setup_data):
-        """
-        Finalizes the setup process: creates admin user, generates API key,
-        and authenticates the user.
-        """
-        try: # <-- FIX: Added 'try' block
-            with st.spinner("Completing setup... This may take a moment."):
-                # 1. Create Admin User
-                user_id, msg = self.security_core.create_user(
-                    email=setup_data['admin_email'],
-                    password=setup_data['admin_password'],
-                    first_name=setup_data['admin_first_name'],
-                    last_name=setup_data['admin_last_name'],
-                    company_name=setup_data['company_name'],
-                    role='admin', # Ensure admin role is set
-                    plan=setup_data.get('selected_plan', 'essentials'),
-                    is_trial_eligible=setup_data.get('is_trial_eligible', False)
-                )
-
-                if user_id:
-                    st.success(f"Admin user created successfully: {setup_data['admin_email']}")
-                    
-                    # Update user's email verified status to True and status to 'active'
-                    self.security_core.update_user_email_verified_status(user_id, True)
-                    self.security_core.update_user_status(user_id, 'active') # Ensure status is active
-
-                    # 2. Generate and Store Initial API Key
-                    raw_api_key, encrypted_api_key = self.security_core.create_api_key(
-                        user_id=user_id,
-                        name=setup_data['initial_api_key_name'],
-                        permissions=setup_data['initial_api_key_permissions']
-                    )
-                    if raw_api_key:
-                        st.success("Initial API Key generated and stored.")
-                        st.markdown(f"**Your Initial API Key (Keep this safe!):** `{raw_api_key}`")
-                        st.session_state.setup_data['initial_api_key'] = raw_api_key # Store for display
-                    else:
-                        st.error("Failed to generate initial API key.")
-
-                    # 3. Log Setup Completion Event
-                    self.security_core.log_security_event(
-                        user_id=user_id,
-                        event_type="setup_completed",
-                        severity="info",
-                        description="Initial platform setup completed successfully"
-                    )
-                    
-                    # Authenticate user and set session state for dashboard access
-                    st.session_state.authenticated = True
-                    st.session_state.user_id = user_id # Standardized to user_id
-                    st.session_state.user_email = setup_data['admin_email']
-                    st.session_state.user_role = 'admin'
-                    st.session_state.company_name = setup_data['company_name']
-                    st.session_state.selected_plan = setup_data['selected_plan']
-                    st.session_state.first_name = setup_data['admin_first_name']
-                    st.session_state.last_name = setup_data['admin_last_name']
-                    
-                    # Clean up setup data from session state
-                    del st.session_state.setup_data
-                    del st.session_state.setup_step
-                    
-                    # Success message
-                    st.success("Setup completed successfully! Welcome to Myers Cybersecurity.")
-                    st.balloons()
-                    
-                    # Redirect to dashboard
-                    st.session_state.current_page = 'dashboard'
-                    st.rerun()
-                else:
-                    st.error(f"Setup failed: {msg}")
-        except Exception as e: # <-- This 'except' block is now correctly paired with the 'try'
-            st.error(f"An unexpected error occurred during setup: {str(e)}")
-
-                    event_type="setup_completed",
-                    severity="info",
-                    description="Initial platform setup completed successfully"
-                )
-                
-                # Authenticate user and set session state for dashboard access
-                st.session_state.authenticated = True
-                st.session_state.user_id = user_id # Standardized to user_id
-                st.session_state.user_email = setup_data['admin_email']
-                st.session_state.user_role = 'admin'
-                st.session_state.company_name = setup_data['company_name']
-                st.session_state.selected_plan = setup_data['selected_plan']
-                st.session_state.first_name = setup_data['admin_first_name']
-                st.session_state.last_name = setup_data['admin_last_name']
-                
-                # Clean up setup data from session state
-                del st.session_state.setup_data
-                del st.session_state.setup_step
-                
-                # Success message
-                st.success("Setup completed successfully! Welcome to Myers Cybersecurity.")
-                st.balloons()
-                
-                # Redirect to dashboard
-                st.session_state.current_page = 'dashboard'
-                st.rerun()
-            else:
-                st.error(f"Setup failed: {msg}")
-    except Exception as e:
-            st.error(f"Setup failed: {str(e)}")
+            # --- Finalize and transition app state ---
+            st.success("Setup completed successfully! You can now log in.")
+            st.balloons()
+            
+            # Clean up wizard state from session
+            del st.session_state['setup_step']
+            del st.session_state['setup_data']
+            
+            # Transition the main app state to 'ready'
+            st.session_state.app_state = 'ready'
+            st.rerun()
