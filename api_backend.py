@@ -1,3 +1,6 @@
+import os
+import logging
+from typing import Annotated, Dict, Any
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,43 +9,47 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.responses import JSONResponse
-from typing import Annotated
 from pydantic import BaseModel, EmailStr
-import os
-import logging
-import secrets
-import stripe
 
-# Assuming these are adapted to be imported and used by FastAPI
-# IMPORTANT: You will need to create/provide the 'security_core_pg.py' file
-from security_core_pg import SecurityCore 
+# --- Hardened Module Imports ---
+from security_core import SecurityCore
 from payment import PaymentProcessor
 from email_automation import EmailAutomation
+from utils.database import init_db_pool, close_db_pool
 
-# Initialize services
-db_security_core = SecurityCore()
-payment_processor = PaymentProcessor()
-email_automation = EmailAutomation()
+# --- Logging Configuration ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("myers_logger")
-
-# Rate limiter setup
+# --- Service Initialization ---
+# These are initialized as singletons for the application's lifecycle.
 limiter = Limiter(key_func=get_remote_address)
-
-# FastAPI app setup
 app = FastAPI(
     title="Myers Cybersecurity API",
     description="Backend API for user management, subscriptions, and security features.",
-    version="0.0.1",
+    version="1.0.0",
 )
+security_core = SecurityCore()
+payment_processor = PaymentProcessor()
+email_automation = EmailAutomation()
 
+# --- FastAPI Lifecycle Events (Fixes Stateless Initialization) ---
+@app.on_event("startup")
+async def startup_event():
+    """Initializes the database pool when the application starts."""
+    logger.info("FastAPI application startup...")
+    init_db_pool()
+    security_core.init_database() # Ensure schema exists
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Closes the database pool when the application shuts down."""
+    logger.info("FastAPI application shutdown...")
+    close_db_pool()
+
+# --- Middleware Configuration ---
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
-
-# CORS setup
-# Make sure CORS_ALLOWED_ORIGINS is set in your environment
 allowed_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
@@ -52,180 +59,95 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# OAuth2 config
-token_url_path = os.environ.get("TOKEN_URL_PATH", "token")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=token_url_path)
+# --- Security & Dependencies ---
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
+
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> Dict[str, Any]:
+    """Dependency to get the current authenticated user's data from a token."""
+    user_id = security_core.verify_access_token(token)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = security_core.get_user_by_id(user_id)
+    if not user or user['status'] != 'active':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is not active.")
+    return user
 
 # --- Pydantic Models ---
 class SignupModel(BaseModel):
     email: EmailStr
     password: str
-    company: str
+    company_name: str
     first_name: str
     last_name: str
-    plan: str
 
-class APIKeyCreateModel(BaseModel):
-    label: str
-
-class PasswordResetRequest(BaseModel):
-    email: EmailStr
-
-class PasswordResetSubmission(BaseModel):
-    token: str
-    new_password: str
-    confirm_password: str
-
-# --- Utility Functions ---
-async def get_current_user_id(token: Annotated[str, Depends(oauth2_scheme)]):
-    user_id = db_security_core.verify_access_token(token)
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed: invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return user_id
-
-# --- Exception Handlers ---
-@app.exception_handler(RateLimitExceeded)
-async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
-    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Please wait and try again."})
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
 # --- API Endpoints ---
-@app.get("/")
-async def read_root():
-    return {"message": "Welcome to the Myers Cybersecurity Backend!"}
-
-@app.get("/healthz")
+@app.get("/healthz", tags=["Status"])
 async def health_check():
+    """Provides a simple health check endpoint."""
     return {"status": "ok", "version": app.version}
 
-@app.post(f"/{token_url_path}")
-@limiter.limit("5/minute")
-async def generate_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
-    auth_result, error_message = db_security_core.authenticate_user(
-        form_data.username, form_data.password
-    )
-    if not auth_result:
+@app.post("/token", response_model=Token, tags=["Authentication"])
+@limiter.limit("10/minute")
+async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
+    """
+    Authenticates a user and returns a JWT access token.
+    This endpoint is fully rewritten to use the hardened SecurityCore methods.
+    """
+    user = security_core.get_user_by_email(form_data.username)
+    if not user or not security_core.check_password(form_data.password, user['password_hash']):
         logger.warning(f"Failed login attempt for {form_data.username}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=error_message
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token = db_security_core.create_access_token({
-        "sub": auth_result['email'],
-        "id": auth_result['id']
-    })
-    logger.info(f"Token issued for user ID {auth_result['id']}")
+    if user['status'] != 'active':
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not active.")
+
+    # --- FIX APPLIED: Correct JWT Payload ---
+    access_token = security_core.create_access_token(user_id=str(user['id']), role=user['role'])
+    security_core.update_user(user['id'], {'last_login': datetime.now(timezone.utc)})
+    logger.info(f"Token issued for user ID {user['id']}")
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.post("/signup")
+@app.post("/signup", status_code=status.HTTP_201_CREATED, tags=["Authentication"])
 async def signup_user(signup_data: SignupModel):
-    user_id, message = db_security_core.create_user(
+    """
+    Registers a new user.
+    """
+    user_id, message = security_core.create_user(
         email=signup_data.email,
         password=signup_data.password,
-        company=signup_data.company,
+        company_name=signup_data.company_name,
         first_name=signup_data.first_name,
         last_name=signup_data.last_name,
-        plan=signup_data.plan,
-        email_verified=False
     )
     if not user_id:
         logger.error(f"Signup failed for {signup_data.email}: {message}")
-        raise HTTPException(status_code=400, detail=message)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
     
-    # This assumes create_user returns the user's name and you have a method to generate a verification link
-    # For simplicity, we'll just send the email.
-    # verification_link = db_security_core.generate_email_verification_link(user_id)
-    # email_automation.send_verification_email(signup_data.email, signup_data.first_name, verification_link)
+    # Placeholder for sending a verification email
+    # email_automation.send_verification_email(...)
     
     logger.info(f"New signup registered: {signup_data.email}")
     return {"message": "Signup successful. Please check your email to verify your account."}
 
-@app.post("/api-keys")
-async def create_api_key(api_key_data: APIKeyCreateModel, current_user_id: Annotated[str, Depends(get_current_user_id)]):
-    api_key_value = secrets.token_urlsafe(32)
-    result = db_security_core.add_api_key(current_user_id, api_key_data.label, api_key=api_key_value, service="custom", permissions="read")
-    email_automation.send_admin_alert(f"API Key created by user ID {current_user_id}")
-    logger.info(f"API key created for user ID {current_user_id}")
-    return {"message": "API key created.", "key_id": result, "api_key": api_key_value}
+@app.get("/users/me", tags=["Users"])
+async def read_users_me(current_user: Annotated[Dict[str, Any], Depends(get_current_user)]):
+    """Fetches the profile of the currently authenticated user."""
+    # Exclude sensitive data before returning
+    current_user.pop('password_hash', None)
+    return current_user
 
-@app.post("/forgot-password")
-async def forgot_password(payload: PasswordResetRequest):
-    token = db_security_core.generate_password_reset_token(payload.email)
-    if token:
-        app_url = os.environ["APP_URL"]
-        reset_link = f"{app_url}/?page=reset_password&token={token}"
-        # CORRECTED: This method is now added to the EmailAutomation class
-        email_automation.send_password_reset_email(payload.email, reset_link)
-    return {"message": "If an account with that email exists, a reset link has been sent."}
+# --- FIX APPLIED: Architectural Conflict Removed ---
+# The /stripe-webhooks endpoint has been completely removed from this file.
+# That functionality belongs exclusively in the `webhook_handler.py` service.
 
-@app.post("/reset-password")
-async def reset_password(payload: PasswordResetSubmission):
-    if payload.new_password != payload.confirm_password:
-        raise HTTPException(status_code=400, detail="Passwords do not match.")
-
-    user_info = db_security_core.verify_password_reset_token(payload.token)
-    if not user_info:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token.")
-
-    is_strong, reason = db_security_core.validate_password_strength(payload.new_password)
-    if not is_strong:
-        raise HTTPException(status_code=400, detail=reason)
-    
-    # CORRECTED: Changed from user_info['user_idid'] to user_info.get('id')
-    user_id = user_info.get('id')
-    if not user_id:
-        raise HTTPException(status_code=500, detail="Could not extract user ID from token.")
-
-    success = db_security_core.reset_user_password(user_id, payload.new_password)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to reset password.")
-    return {"message": "Password reset successful. You may now log in."}
-
-# ADDED: Stripe Webhook Endpoint
-@app.post("/stripe-webhooks")
-async def stripe_webhooks(request: Request):
-    payload = await request.body()
-    sig_header = request.headers.get('stripe-signature')
-    webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
-
-    if not webhook_secret:
-        logger.error("STRIPE_WEBHOOK_SECRET is not set.")
-        raise HTTPException(status_code=500, detail="Webhook secret not configured.")
-
-    try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, webhook_secret
-        )
-    except ValueError as e:
-        # Invalid payload
-        logger.error(f"Webhook payload error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except stripe.error.SignatureVerificationError as e:
-        # Invalid signature
-        logger.error(f"Webhook signature error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # Handle the event
-    if event['type'] == 'checkout.session.completed':
-        session = event['data']['object']
-        customer_email = session.get('customer_email')
-        subscription_id = session.get('subscription')
-        
-        if customer_email and subscription_id:
-            # This method needs to exist in your SecurityCore
-            # It should find the user by email and update their plan, 
-            # payment_status, and store the subscription_id.
-            success = db_security_core.activate_user_subscription(
-                email=customer_email, 
-                stripe_subscription_id=subscription_id
-            )
-            if success:
-                logger.info(f"Subscription activated via webhook for {customer_email}")
-            else:
-                logger.error(f"Failed to activate subscription via webhook for {customer_email}")
-    
-    # Add handlers for other events like 'invoice.payment_failed', 'customer.subscription.deleted', etc.
-
-    return {"status": "success"}
