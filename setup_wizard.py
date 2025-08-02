@@ -228,47 +228,79 @@ class SetupWizard:
         if st.button("Complete Setup"):
             self.complete_setup(setup_data)
 
-    def complete_setup(self, setup_data):
+     def complete_setup(self, setup_data):
         """
         Finalizes the setup process: creates admin user, generates API key,
         and authenticates the user.
         """
-        with st.spinner("Completing setup... This may take a moment."):
-            # 1. Create Admin User
-            user_id, msg = self.security_core.create_user(
-                email=setup_data['admin_email'],
-                password=setup_data['admin_password'],
-                first_name=setup_data['admin_first_name'],
-                last_name=setup_data['admin_last_name'],
-                company_name=setup_data['company_name'],
-                role='admin', # Ensure admin role is set
-                plan=setup_data.get('selected_plan', 'essentials'),
-                is_trial_eligible=setup_data.get('is_trial_eligible', False)
-            )
-
-            if user_id:
-                st.success(f"Admin user created successfully: {setup_data['admin_email']}")
-                
-                # Update user's email verified status to True and status to 'active'
-                self.security_core.update_user_email_verified_status(user_id, True)
-                self.security_core.update_user_status(user_id, 'active') # Ensure status is active
-
-                # 2. Generate and Store Initial API Key
-                raw_api_key, encrypted_api_key = self.security_core.create_api_key(
-                    user_id=user_id,
-                    name=setup_data['initial_api_key_name'],
-                    permissions=setup_data['initial_api_key_permissions']
+        try: # <-- FIX: Added 'try' block
+            with st.spinner("Completing setup... This may take a moment."):
+                # 1. Create Admin User
+                user_id, msg = self.security_core.create_user(
+                    email=setup_data['admin_email'],
+                    password=setup_data['admin_password'],
+                    first_name=setup_data['admin_first_name'],
+                    last_name=setup_data['admin_last_name'],
+                    company_name=setup_data['company_name'],
+                    role='admin', # Ensure admin role is set
+                    plan=setup_data.get('selected_plan', 'essentials'),
+                    is_trial_eligible=setup_data.get('is_trial_eligible', False)
                 )
-                if raw_api_key:
-                    st.success("Initial API Key generated and stored.")
-                    st.markdown(f"**Your Initial API Key (Keep this safe!):** `{raw_api_key}`")
-                    st.session_state.setup_data['initial_api_key'] = raw_api_key # Store for display
-                else:
-                    st.error("Failed to generate initial API key.")
 
-                # 3. Log Setup Completion Event
-                self.security_core.log_security_event(
-                    user_id=user_id,
+                if user_id:
+                    st.success(f"Admin user created successfully: {setup_data['admin_email']}")
+                    
+                    # Update user's email verified status to True and status to 'active'
+                    self.security_core.update_user_email_verified_status(user_id, True)
+                    self.security_core.update_user_status(user_id, 'active') # Ensure status is active
+
+                    # 2. Generate and Store Initial API Key
+                    raw_api_key, encrypted_api_key = self.security_core.create_api_key(
+                        user_id=user_id,
+                        name=setup_data['initial_api_key_name'],
+                        permissions=setup_data['initial_api_key_permissions']
+                    )
+                    if raw_api_key:
+                        st.success("Initial API Key generated and stored.")
+                        st.markdown(f"**Your Initial API Key (Keep this safe!):** `{raw_api_key}`")
+                        st.session_state.setup_data['initial_api_key'] = raw_api_key # Store for display
+                    else:
+                        st.error("Failed to generate initial API key.")
+
+                    # 3. Log Setup Completion Event
+                    self.security_core.log_security_event(
+                        user_id=user_id,
+                        event_type="setup_completed",
+                        severity="info",
+                        description="Initial platform setup completed successfully"
+                    )
+                    
+                    # Authenticate user and set session state for dashboard access
+                    st.session_state.authenticated = True
+                    st.session_state.user_id = user_id # Standardized to user_id
+                    st.session_state.user_email = setup_data['admin_email']
+                    st.session_state.user_role = 'admin'
+                    st.session_state.company_name = setup_data['company_name']
+                    st.session_state.selected_plan = setup_data['selected_plan']
+                    st.session_state.first_name = setup_data['admin_first_name']
+                    st.session_state.last_name = setup_data['admin_last_name']
+                    
+                    # Clean up setup data from session state
+                    del st.session_state.setup_data
+                    del st.session_state.setup_step
+                    
+                    # Success message
+                    st.success("Setup completed successfully! Welcome to Myers Cybersecurity.")
+                    st.balloons()
+                    
+                    # Redirect to dashboard
+                    st.session_state.current_page = 'dashboard'
+                    st.rerun()
+                else:
+                    st.error(f"Setup failed: {msg}")
+        except Exception as e: # <-- This 'except' block is now correctly paired with the 'try'
+            st.error(f"An unexpected error occurred during setup: {str(e)}")
+
                     event_type="setup_completed",
                     severity="info",
                     description="Initial platform setup completed successfully"
