@@ -9,6 +9,7 @@ Core frameworks for the frontend dashboard and backend API
 fastapi==0.111.1
 streamlit==1.33.0
 uvicorn[standard]==0.30.6
+streamlit-antd-components==0.2.5 # For professional UI components
 
 --- Database ---
 Driver for connecting to the PostgreSQL database
@@ -33,6 +34,7 @@ email-validator==2.1.1
 sendgrid==6.11.0
 
 --- Data Handling & Utilities ---
-For data manipulation in the admin panel and environment variable loading
+For data manipulation in the admin panel and making API calls
 pandas==2.2.2
 python-dotenv==1.0.1
+requests==2.31.0
