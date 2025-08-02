@@ -1,47 +1,54 @@
+# render.yaml
+# This file defines the "Infrastructure as Code" for the MyersCybersecurity platform on Render.
+# It sets up a single Docker service and a corresponding PostgreSQL database.
+
 services:
   - type: web
     name: myers-cybersecurity
     env: docker
-    repo: https://github.com/myersdigitalservicesai/myersdigitalservicesAI # This should be your repository
+    repo: https://github.com/myersdigitalservicesai/myers-cybersecurity-platform # Ensure this is your repository URL
     branch: main
-    plan: free # Or your desired plan
+    plan: starter # Or your desired plan
     autoDeploy: true
-    healthCheckPath: /healthz # CORRECTED: Was /health
+    healthCheckPath: /healthz
     envVars:
       - key: ENVIRONMENT
         value: production
-      - key: DOMAIN
-        value: https://myers-cybersecurity.onrender.com # This will be your app's domain
       - key: DATABASE_URL
         fromDatabase:
-          name: myers-db # Assuming you name your Render database this
+          name: myers-cybersecurity-db
           property: connectionString
+      - key: APP_URL
+        fromService:
+          type: web
+          name: myers-cybersecurity
+          property: url
+      - key: CORS_ALLOWED_ORIGINS
+        fromService:
+          type: web
+          name: myers-cybersecurity
+          property: url
+      - key: TOKEN_URL_PATH
+        value: "token"
+      # --- SECRETS ---
+      # These keys must be set in your Render Environment Group
+      # and will not be synced from this file.
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: SMTP_API_KEY
         sync: false
-      - key: SMTP_SERVER
-        sync: false
-      - key: SMTP_PORT
-        sync: false
-      - key: SMTP_USER
-        sync: false
-      - key: SENDER_EMAIL
-        sync: false
-      - key: APP_URL
-        value: https://myers-cybersecurity.onrender.com # This will be your app's domain
       - key: SETUP_ADMIN_EMAIL
         sync: false
-      - key: CORS_ALLOWED_ORIGINS
-        value: "https://myers-cybersecurity.onrender.com" # Your frontend URL
-      - key: TOKEN_URL_PATH
-        value: "token" # The path for your token endpoint
 
-# Example of a database to link with the service
+# Defines the PostgreSQL database linked to the service above
 databases:
-  - name: myers-db
+  - name: myers-cybersecurity-db
     databaseName: myers_cybersecurity
     user: myers_user
-    plan: free # Or your desired plan
+    plan: starter # Or your desired plan
